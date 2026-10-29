@@ -30,6 +30,12 @@
     layer: "final",
     search: "",
     running: false,
+    recordingPollTimer: null,
+    recordingPollBusy: false,
+    recordingPollGeneration: 0,
+    recordingRenderedKey: null,
+    captureWarningShown: false,
+    captureStalled: false,
     stream: null,
     ctx: null,
     source: null,
@@ -3323,7 +3329,7 @@
   }
 
   async function refreshSelectedSession() {
-    if (!state.sessionId || state.refreshingSegments) return;
+    if (!state.sessionId || state.refreshingSegments) return false;
     state.refreshingSegments = true;
     try {
       const data = await fetchJSON(segmentsURL(state.sessionId));
@@ -3334,11 +3340,93 @@
       if (trainingIsRunning(data.adaptive_asr) && state.postprocessPollSessionId !== state.sessionId) {
         startPostprocessPolling(state.sessionId);
       }
+      return true;
     } catch (error) {
       console.debug("segment refresh skipped", error);
+      return false;
     } finally {
       state.refreshingSegments = false;
     }
+  }
+
+  // V8.2-beta UI hotfix, restored for epsilon:
+  // While recording, poll the lightweight /api/recording/status every 500 ms
+  // for live preview text and native capture health. The full session
+  // (transcript, PDF viewer, annotations) is rebuilt only when segment_count
+  // or pending_count changes, never on a fixed timer.
+  function setRecordingBadge(text, captureError = false) {
+    if (!els.recordingBadge) return;
+    els.recordingBadge.replaceChildren(document.createElement("i"), text);
+    els.recordingBadge.classList.toggle("capture-error", captureError);
+  }
+
+  function stopRecordingStatusPolling() {
+    if (state.recordingPollTimer) clearTimeout(state.recordingPollTimer);
+    state.recordingPollTimer = null;
+    state.recordingPollGeneration += 1;
+    state.recordingPollBusy = false;
+  }
+
+  async function pollRecordingStatus(generation) {
+    if (!state.running || !state.sessionId || generation !== state.recordingPollGeneration) return;
+    if (state.recordingPollBusy) {
+      state.recordingPollTimer = setTimeout(() => pollRecordingStatus(generation), 300);
+      return;
+    }
+    state.recordingPollBusy = true;
+    try {
+      const sessionId = state.sessionId;
+      const data = await fetchJSON(`/api/recording/status?session_id=${encodeURIComponent(sessionId)}`);
+      if (!state.running || generation !== state.recordingPollGeneration || sessionId !== state.sessionId) return;
+
+      syncLivePreview(data);
+
+      state.captureStalled = Boolean(data.capture_stalled);
+      if (state.captureStalled) {
+        setRecordingBadge("CAPTURE ERROR", true);
+        if (!state.captureWarningShown) {
+          state.captureWarningShown = true;
+          toast(`오디오 PCM이 ${Number(data.capture_last_pcm_age_sec || 0).toFixed(1)}초 이상 멈췄습니다. 녹음을 정지 후 재개하세요.`, "error");
+        }
+      } else {
+        setRecordingBadge("Recording");
+        if (data.capture_alive) {
+          // Healthy again: a later stall should warn again.
+          state.captureWarningShown = false;
+        } else if (Number(data.capture_heartbeat_age_sec ?? 0) > 3 && !state.captureWarningShown) {
+          state.captureWarningShown = true;
+          toast("Native 오디오 capture heartbeat가 끊겼습니다. 녹음 상태를 확인하세요.", "error");
+        }
+      }
+
+      // Compare against the counts the last successful full refresh covered,
+      // so a refresh skipped while another is in flight is retried next poll.
+      const key = `${Number(data.segment_count || 0)}:${Number(data.pending_count || 0)}`;
+      if (key !== state.recordingRenderedKey) {
+        refreshSelectedSession().then((ok) => {
+          if (!ok || generation !== state.recordingPollGeneration) return;
+          state.recordingRenderedKey = key;
+          if (state.followLatest) followTranscriptBottom({ smooth: true });
+        });
+      }
+    } catch (error) {
+      console.debug("native recording status poll skipped", error);
+    } finally {
+      state.recordingPollBusy = false;
+      if (state.running && generation === state.recordingPollGeneration) {
+        state.recordingPollTimer = setTimeout(() => pollRecordingStatus(generation), 500);
+      }
+    }
+  }
+
+  function beginNativeCaptureMonitoring() {
+    stopRecordingStatusPolling();
+    state.running = true;
+    state.recordingRenderedKey = null;
+    state.captureWarningShown = false;
+    state.captureStalled = false;
+    setRecordingBadge("Recording");
+    pollRecordingStatus(state.recordingPollGeneration);
   }
 
   async function beginAudioCapture(existingStream = null) {
@@ -3352,7 +3440,7 @@
     state.source = null;
     state.processor = null;
     state.buffer = new Float32Array(0);
-    state.running = true;
+    beginNativeCaptureMonitoring();
   }
 
   async function startSession(title, subjectId, denoiseStrength = 2, sttAudioSource = "raw") {
@@ -3433,6 +3521,7 @@
   }
 
   async function cleanupAudio() {
+    stopRecordingStatusPolling();
     // Defensive cleanup for a tab that was opened before Hotfix 3.
     try { state.processor?.disconnect(); } catch (_) {}
     try { state.source?.disconnect(); } catch (_) {}
@@ -4086,13 +4175,13 @@
     const newestRecording = state.library.sessions.find((s) => s.recording);
     if (newestRecording) await openSession(newestRecording.session_id, { quiet: true });
 
+    // While recording, pollRecordingStatus() drives refreshes. This loop only
+    // covers the tail after Stop while final Whisper segments are pending.
     setInterval(() => {
       if (
         state.sessionId
-        && (
-          state.running
-          || Number(state.session?.pending_count || 0) > 0
-        )
+        && !state.running
+        && Number(state.session?.pending_count || 0) > 0
       ) {
         refreshSelectedSession();
       }

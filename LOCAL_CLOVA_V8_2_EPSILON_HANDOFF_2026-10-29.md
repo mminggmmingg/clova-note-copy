@@ -175,13 +175,33 @@ native_audio_daemon_v8_2_beta.py
 
 남은 edge case (기존 동작, 이번에 안 건드림): 종료 시 sender가 2초 join timeout 뒤에도 살아 있으면, 마지막 `save_status(False)` 이후 `save_status(True)`를 한 번 더 쓸 수 있음.
 
-### 7.6 UI에서 캡처 정지 경고가 사라짐 — 의도 확인 필요
+### 7.6 UI 캡처 정지 경고 + beta UI lag hotfix 회귀 — 2026-10-29 복원
 
-- epsilon 직전 UI(`backups/v8.2-epsilon-whisper-20260922-003145/web/app_v6.js`)는 `/api/recording/status`를 polling해서 `capture_stalled`면 "오디오 PCM이 N초 이상 멈췄습니다…" toast를 띄웠다.
-- 현재 UI(epsilon hotfix 초반에 제거, 9/22 01:07 백업에는 이미 없음)는 이 endpoint를 전혀 부르지 않는다. 백엔드 endpoint는 남아 있다.
-- → 캡처가 멈춰도 UI는 계속 "녹음 중"으로 보일 수 있다. alpha hotfix3의 "false Recording 대신 capture error" 원칙과 충돌.
-- `tools/test-v8.2-native-capture-core.py`가 이 부분(`/api/recording/status`, `beginNativeCaptureMonitoring`)에서 실패하는 것도 이 때문. (같은 테스트의 WAV writer 부분은 stereo로 갱신해서 통과)
-- 렌더 부하를 줄이려고 일부러 뺀 건지 확인 필요. 되살린다면 가벼운 status poll + stall toast만 복원 (beta UI lag hotfix처럼 전체 DOM 재구성은 하지 않게).
+발견한 것:
+
+- epsilon 직전 UI(`backups/v8.2-epsilon-whisper-20260922-003145/web/app_v6.js`)는 녹음 중 `/api/recording/status`를 500ms마다 polling해서 `capture_stalled`면 "오디오 PCM이 N초 이상 멈췄습니다…" toast를 띄웠다.
+- epsilon hotfix 초반(9/22 01:07 백업에는 이미 없음)에 이 polling이 통째로 빠졌다. → 캡처가 멈춰도 UI는 계속 "Recording".
+- 대신 **녹음 중 700ms마다 `/api/segments` 전체 조회 + `showSession()`(전사 카드 전체 `innerHTML` 재구성 + PDF/inspector 재렌더)** 루프가 돌고 있었다. V8.2-beta UI hotfix1에서 없앴던 렌더 폭풍이 그대로 돌아온 것.
+
+복원 (`web/app_v6.js`):
+
+- 녹음 중에는 `pollRecordingStatus()`가 500ms마다 `/api/recording/status`만 조회 → live preview(`unfixed_text`), 캡처 상태 처리.
+- `capture_stalled` → 배지 `CAPTURE ERROR`(빨간 테두리, 점 깜빡임 정지) + toast 1회. 정상으로 돌아오면 배지 `Recording`, 다음 정지 때 다시 toast.
+- heartbeat 3초 이상 끊김 → toast 1회.
+- 전체 세션 갱신은 `segment_count`/`pending_count`가 바뀔 때만. 마지막으로 **성공한** 전체 갱신의 값과 비교하므로, 다른 갱신과 겹쳐 건너뛴 경우 다음 poll에서 다시 시도.
+- 700ms 루프는 Stop 후 pending segment가 남아 있을 때만.
+- 캐시 키 `?v=8.2-epsilon4.1`.
+
+검증 (stub 백엔드 + 브라우저):
+
+- 변화 없는 5초: status 10회, `/api/segments` 0회 (이전 코드는 약 7회 + 전체 재렌더).
+- 세그먼트 0 → 3개: `/api/segments` 1회, 카드 3개.
+- 미리보기 텍스트 표시, 정지 → `CAPTURE ERROR` + toast 1회, 복구 → `Recording`, 다시 정지 → toast 1회.
+- Stop 후 status polling 0회. 콘솔 에러 없음.
+- `tools/test-v8.2-native-capture-core.py` PASS.
+- 실제 백엔드/녹음으로는 아직 확인 안 함 → 다음 녹음에서 확인.
+
+참고: `tools/test-v8-beta*-ui-core.py`, `test-v8-gamma-ui-core.py`는 이번 변경 전에도 같은 항목(옛 버전 캐시 마커 등)으로 실패하던 오래된 테스트다.
 
 ### 7.2 Professor LoRA가 production ASR과 끊겨 있음
 
@@ -210,8 +230,9 @@ native_audio_daemon_v8_2_beta.py
 ## 8. 다음 할 일 (우선순위)
 
 ```text
-0. (완료) NATIVE STATUS WARN race 수정 (7.1) — 다음 녹음에서 경고 0인지 확인
-1. UI 캡처 정지 경고 복원 여부 결정 (7.6)
+0. (완료) NATIVE STATUS WARN race 수정 (7.1), UI status poll / 캡처 정지 경고 복원 (7.6)
+   → 다음 실제 녹음에서: 데몬 로그에 NATIVE STATUS WARN 0회, UI가 녹음 중 가볍게 유지되는지, 새 세그먼트·미리보기가 정상으로 뜨는지 확인
+1. 오래된 UI 테스트(`test-v8-beta*/gamma-ui-core.py`) 정리 — 현재 UI 기준으로 갱신하거나 제거
 2. Professor LoRA 방향 결정 (7.2) — Whisper adaptation으로 옮길지
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)
 4. 루트 버전 사본 정리 + 현재 파일 이름 정리 (7.5)
@@ -329,4 +350,4 @@ silero_vad=6.2.1 threshold=0.5 vad_gain_db=0.0 audio_frontend=webrtc pywebrtc=1 
 
 ## 15. 한 줄 핸드오프
 
-> Local Clova는 V8.2-epsilon.4다. host `pw-record` 스테레오 캡처 → `lecture_raw.wav`(authoritative) → RAW-backed cursor → pywebrtc APM derivative → Silero VAD → Adaptive Segmenter → **whisper.cpp Large-v3 단일 ASR**(final + bounded preview + word timestamps) 구조로 10월 실사용에서 안정적이다. 실행은 `./start-local-clova.sh` (VAD 0 dB; `--vad-db 11` 쓰지 말 것). 백엔드 파일 이름은 아직 `*_gamma.py`다. native status 파일 race는 2026-10-29에 고쳤다. 남은 일은 UI 캡처 정지 경고 복원 여부 결정, Professor LoRA를 Whisper 쪽으로 다시 연결할지 결정, ASR registry 정리, 버전 사본 정리다.
+> Local Clova는 V8.2-epsilon.4다. host `pw-record` 스테레오 캡처 → `lecture_raw.wav`(authoritative) → RAW-backed cursor → pywebrtc APM derivative → Silero VAD → Adaptive Segmenter → **whisper.cpp Large-v3 단일 ASR**(final + bounded preview + word timestamps) 구조로 10월 실사용에서 안정적이다. 실행은 `./start-local-clova.sh` (VAD 0 dB; `--vad-db 11` 쓰지 말 것). 백엔드 파일 이름은 아직 `*_gamma.py`다. 2026-10-29에 native status 파일 race를 고치고, epsilon에서 빠졌던 UI status poll / 캡처 정지 경고를 복원하면서 녹음 중 700ms 전체 재렌더 루프를 없앴다. 남은 일은 Professor LoRA를 Whisper 쪽으로 다시 연결할지 결정, ASR registry 정리, 버전 사본 정리다.

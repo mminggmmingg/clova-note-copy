@@ -143,6 +143,8 @@ kbd { padding: 2px 6px; border-radius: 5px; background: rgba(255,255,255,.055); 
 .status-error { color: #ff858c; background: rgba(255,109,117,.08); border-color: rgba(255,109,117,.12); }
 .recording-badge { color: #ff8d93; background: var(--red-soft); border: 1px solid rgba(255,109,117,.13); }
 .recording-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-right: 5px; animation: pulse-dot 1.3s infinite; }
+.recording-badge.capture-error { border-color: var(--red); }
+.recording-badge.capture-error i { animation: none; }
 #sessionHeading { margin: 0; max-width: min(720px, 48vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 690; letter-spacing: -.02em; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .control-button { height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.026); display: inline-flex; align-items: center; gap: 7px; font-size: 10.5px; font-weight: 650; }
