@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0d10" />
+  <title>Local Clova</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ui/app.css?v=8.1-alpha" />
+</head>
+<body>
+  <!-- V8.2-epsilon.4 cleanup: Whisper-only stable UI -->
+  <div class="app-shell" id="appShell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="brand-copy">
+          <strong>Local Clova</strong>
+          <span>Lecture Intelligence · V8.2-epsilon.4 · STABLE</span>
+        </div>
+        <button class="icon-button sidebar-collapse" id="collapseSidebar" type="button" title="사이드바 접기" aria-label="사이드바 접기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+      </div>
+
+      <button class="new-session-button" id="newSessionBtn" type="button">
+        <span class="plus-box">+</span>
+        <span>새 세션</span>
+        <kbd>Ctrl N</kbd>
+      </button>
+
+      <label class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="sessionSearch" type="search" placeholder="세션, 태그 검색" autocomplete="off" />
+      </label>
+
+      <div class="sidebar-scroll">
+        <div class="sidebar-label-row">
+          <span>수업 라이브러리</span>
+          <button class="tiny-icon-button" id="sidebarNewSubject" type="button" title="과목 만들기">+</button>
+        </div>
+        <nav id="libraryNav" class="library-nav" aria-label="수업 라이브러리"></nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-status-row">
+          <div class="runtime-dot-row">
+            <span class="runtime-dot"></span>
+            <span>On-device · Private</span>
+          </div>
+          <button class="theme-toggle" id="themeToggle" type="button" title="현재 다크 모드 · 클릭하여 라이트 모드" aria-label="현재 다크 모드 · 클릭하여 라이트 모드">
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.1A8.5 8.5 0 0 1 9.9 3.5 8.5 8.5 0 1 0 20.5 14.1Z"/></svg>
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+            <svg class="theme-icon theme-icon-notebook" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="6" y="3" width="14" height="18" rx="2"/>
+              <path d="M9 3v18M4 7h4M4 11h4M4 15h4M13 8h4M13 12h4M13 16h3"/>
+            </svg>
+          </button>
+        </div>
+        <button class="shutdown-button" id="shutdownApp" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M6.3 5.3a8 8 0 1 0 11.4 0"/></svg>
+          <span>앱 종료</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="column-resizer sidebar-resizer" id="sidebarSplitter" role="separator" aria-orientation="vertical" aria-label="라이브러리 폭 조절" tabindex="0"></div>
+
+    <button class="sidebar-reopen" id="reopenSidebar" type="button" title="사이드바 열기" aria-label="사이드바 열기">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="header-left">
+          <button class="icon-button mobile-menu" id="openSidebar" type="button" aria-label="사이드바 열기">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <div class="session-heading-wrap">
+            <div class="eyebrow-row">
+              <span id="headerSubject" class="subject-pill">미분류</span>
+              <span id="recordingBadge" class="recording-badge hidden"><i></i>Recording</span>
+              <span id="headerPostStatus" class="status-badge status-done">Whisper Large-v3</span>
+            </div>
+            <h1 id="sessionHeading">오늘의 수업을 기록해보세요</h1>
+          </div>
+          <div class="header-pdf-zone hidden" id="headerPdfZone" aria-label="세션 PDF">
+            <div class="header-pdf-shelf" id="pdfShelf" aria-label="세션 PDF 목록"></div>
+            <input id="pdfFileInput" type="file" accept="application/pdf,.pdf" multiple hidden />
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="control-button stop" id="stopBtn" type="button" disabled>
+            <span class="stop-square"></span>
+            <span>정지</span>
+          </button>
+          <button class="control-button resume hidden" id="resumeBtn" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg>
+            <span>재개</span>
+          </button>
+          <button class="control-button lecture-play hidden" id="autoPlayBtn" type="button" disabled title="현재 세션의 원본 음성을 처음부터 연속 재생">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7Z"/><path d="M4 5v14"/></svg>
+            <span id="autoPlayButtonText">전체 재생</span>
+          </button>
+          <button class="control-button postprocess hidden" id="postprocessBtn" type="button" disabled aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m18.5 15 .9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1Z"/></svg>
+            <span id="postprocessButtonText">교수 LoRA 학습</span>
+          </button>
+          <div class="layer-switch header-layer-switch hidden" id="layerSwitch" aria-label="전사 레이어" aria-hidden="true"></div>
+          <button class="icon-button inspector-toggle" id="toggleInspector" type="button" title="세션 정보" aria-label="세션 정보">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="empty-state" id="emptyState">
+        <div class="hero-orbit">
+          <div class="hero-core">
+            <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
+          </div>
+        </div>
+        <span class="hero-kicker">LOCAL · REALTIME · PRIVATE</span>
+        <h2>강의가 끝날 때까지<br/>기억은 Clova에게 맡기세요.</h2>
+        <p>Whisper Large-v3가 강의 음성을 로컬에서 전사합니다. 원본 음성과 타임라인은 그대로 보존되며, 전사는 하나의 기본 색상으로 표시됩니다.</p>
+        <button class="hero-action" id="heroNewSession" type="button">
+          <span>새 세션 시작</span><span>→</span>
+        </button>
+        <div class="hero-features">
+          <span><i>01</i> Whisper Large-v3</span>
+          <span><i>02</i> 원문 오디오 보존</span>
+          <span><i>03</i> Live Preview + Word Seek</span>
+        </div>
+      </section>
+
+      <section class="session-view hidden" id="sessionView">
+        <section class="pdf-pane" id="pdfPane" aria-label="강의 PDF">
+          <div class="pdf-pane-head">
+            <div class="pdf-pane-title-wrap">
+              <strong id="pdfPaneTitle">PDF 자료</strong>
+              <span class="pdf-canonical-ref" id="pdfCanonicalRef"></span>
+            </div>
+            <div class="pdf-ink-controls" id="pdfInkControls" aria-label="PDF 필기 도구">
+              <button id="pdfToolPen" class="pdf-ink-tool active" type="button" data-tool="pen" title="볼펜" aria-label="볼펜" aria-pressed="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19l1.2-4.3L15.8 5a2.1 2.1 0 0 1 3 3l-9.7 9.6L5 19Z"/><path d="m13.8 7 3.2 3.2"/></svg>
+              </button>
+              <button id="pdfToolEraser" class="pdf-ink-tool" type="button" data-tool="eraser" title="지우개 · soft erase" aria-label="지우개" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.2 17.8-3-3a2 2 0 0 1 0-2.8l7-7a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8l-6 6H8.2Z"/><path d="M11 8.2 15.8 13M8.2 17.8H20"/></svg>
+              </button>
+              <button id="pdfToolHighlighter" class="pdf-ink-tool" type="button" data-tool="highlighter" title="형광펜" aria-label="형광펜" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 16 8.7-10.3a1.7 1.7 0 0 1 2.5-.1l.2.2a1.7 1.7 0 0 1 .1 2.5L9.8 18.6 7 16Z"/><path d="m6.5 16.5-1.8 3.2 3.5-1.1M12.8 9.1l3.1 2.7"/></svg>
+              </button>
+            </div>
+            <div class="pdf-head-controls" aria-label="PDF 페이지 및 확대 조작">
+              <div class="pdf-nav-controls" aria-label="PDF 페이지 이동">
+                <button id="pdfPrev" type="button" title="이전 페이지 · ←" aria-label="이전 페이지">←</button>
+                <span id="pdfPageLabel">Page 1</span>
+                <button id="pdfNext" type="button" title="다음 페이지 · →" aria-label="다음 페이지">→</button>
+              </div>
+              <div class="pdf-zoom-controls" aria-label="PDF 확대/축소">
+                <button id="pdfZoomOut" type="button" title="축소" aria-label="PDF 축소">−</button>
+                <button id="pdfZoomLabel" class="pdf-zoom-label" type="button" title="100%로 초기화" aria-label="현재 확대율 · 100%로 초기화">100%</button>
+                <button id="pdfZoomIn" type="button" title="확대" aria-label="PDF 확대">+</button>
+                <button id="pdfZoomFit" class="pdf-zoom-fit" type="button" title="가로폭 맞춤" aria-label="PDF 가로폭 맞춤">맞춤</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="pdf-viewer-stage" id="pdfDropZone">
+            <div class="pdf-drop-overlay hidden" id="pdfDropOverlay">
+              <div class="pdf-drop-sheet">
+                <svg viewBox="0 0 64 72" aria-hidden="true"><path d="M12 3h29l11 11v50a5 5 0 0 1-5 5H12a5 5 0 0 1-5-5V8a5 5 0 0 1 5-5Z"/><path d="M40 3v13h12"/><path d="M20 38h24M32 26v24"/></svg>
+                <strong>PDF를 놓으면 Local Clova에 복사됩니다</strong>
+                <span>원본 파일과 독립된 복사본을 ~/clova-note-copy/pdfs에 보관합니다.</span>
+              </div>
+            </div>
+
+            <div class="pdf-document-view" id="pdfDocumentView">
+              <div class="pdf-paper-frame">
+                <div class="pdf-page-loading hidden" id="pdfPageLoading">페이지 불러오는 중…</div>
+                <div class="pdf-page-surface" id="pdfPageSurface">
+                  <img id="pdfPageImage" alt="현재 PDF 페이지" draggable="false" />
+                  <canvas id="pdfAnnotationCanvas" class="pdf-annotation-canvas" aria-label="PDF 필기 레이어"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="column-resizer pdf-transcript-resizer" id="pdfTranscriptSplitter" role="separator" aria-orientation="vertical" aria-label="PDF와 전사 영역 폭 조절" tabindex="0"></div>
+
+        <div class="transcript-pane" id="transcriptPane">
+          <div class="session-topline">
+            <div class="session-stats" id="sessionStats"></div>
+            <button class="deleted-toggle hidden" id="deletedToggle" type="button" aria-pressed="false">삭제된 SEG 0개 보기</button>
+          </div>
+
+          <section class="postprocess-progress hidden" id="postprocessProgress" aria-live="polite" aria-hidden="true">
+            <div class="postprocess-progress-head">
+              <div>
+                <span class="postprocess-progress-kicker">PROFESSOR ADAPTIVE ASR</span>
+                <strong id="postprocessStageLabel">학습 데이터 대기 중</strong>
+              </div>
+              <span class="postprocess-percent" id="postprocessPercent">0%</span>
+            </div>
+            <div class="postprocess-track" aria-hidden="true">
+              <div class="postprocess-fill" id="postprocessFill"></div>
+            </div>
+            <div class="postprocess-progress-meta">
+              <span id="postprocessMessage">Human correction이 쌓이면 교수 LoRA를 학습할 수 있습니다.</span>
+              <span><b id="postprocessElapsed">0 samples</b><i> · </i><b id="postprocessEta">CER —</b></span>
+            </div>
+            <div class="postprocess-stages" id="postprocessStages">
+              <span data-stage-index="1"><i></i>Correction Pool</span>
+              <span data-stage-index="2"><i></i>현재 CER/WER</span>
+              <span data-stage-index="3"><i></i>LoRA 학습</span>
+              <span data-stage-index="4"><i></i>검증 / 승격</span>
+            </div>
+          </section>
+
+          <div class="transcript-list" id="transcriptList"></div>
+
+          <div class="live-card hidden" id="liveCard">
+            <div class="live-card-head">
+              <span><i class="live-dot"></i> 실시간 인식 · LIVE</span>
+              <span>Whisper Large-v3</span>
+            </div>
+            <div id="unfixedText" class="live-text"></div>
+          </div>
+
+          <div class="transcript-empty hidden" id="transcriptEmpty">
+            <div class="empty-line-icon"><span></span><span></span><span></span></div>
+            <strong>아직 확정된 문장이 없습니다.</strong>
+            <span>말하기 시작하면 문장 단위로 여기에 쌓입니다.</span>
+          </div>
+        </div>
+      </section>
+
+      <button class="pdf-return-sync hidden" id="pdfReturnToLecture" type="button">
+        <span>↺</span> PDF · 현재 강의 위치
+      </button>
+
+      <button class="return-playing hidden" id="returnToPlaying" type="button">
+        <span>▶</span> 현재 재생 위치로 이동
+      </button>
+
+      <div class="mini-player hidden" id="miniPlayer">
+        <button class="mini-player-close" id="closePlayer" type="button" aria-label="플레이어 닫기">×</button>
+        <div class="mini-player-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+        </div>
+        <div class="mini-player-copy">
+          <strong id="playerTitle">원본 음성</strong>
+          <span id="playerSubtitle">문장 오디오</span>
+        </div>
+        <div class="mini-player-seq">
+          <button id="playerPrev" type="button" title="이전 SEG" aria-label="이전 SEG">‹</button>
+          <button class="player-pause" id="playerPause" type="button" title="일시정지" aria-label="일시정지">Ⅱ</button>
+          <button id="playerNext" type="button" title="다음 SEG" aria-label="다음 SEG">›</button>
+        </div>
+        <div class="player-stage">
+          <audio id="segmentPlayer" controls></audio>
+          <div class="gapless-progress hidden" id="gaplessProgress" aria-label="전체 재생 진행 상황">
+            <button class="gapless-track" id="gaplessTrack" type="button" aria-label="재생 위치 이동">
+              <span id="gaplessFill"></span>
+            </button>
+            <div class="gapless-progress-meta">
+              <span id="gaplessPosition">0:00 / 0:00</span>
+              <span id="gaplessSegmentCounter">SEG — / —</span>
+            </div>
+          </div>
+        </div>
+        <button class="follow-toggle active" id="autoFollowToggle" type="button" aria-pressed="true" title="재생 위치 자동 따라가기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"/><path d="m13 8 4 4-4 4"/><rect x="3" y="5" width="18" height="14" rx="3"/></svg>
+          <span>따라가기</span>
+        </button>
+        <select class="playback-speed" id="playbackSpeed" title="재생 속도 · Pitch Lock" aria-label="재생 속도 · 피치 고정">
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1.0×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2.0×</option>
+        </select>
+      </div>
+
+      <button class="fullscreen-toggle" id="fullscreenToggle" type="button" title="전체화면" aria-label="전체화면" aria-pressed="false">
+        <svg class="fullscreen-enter-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 9 3 3"/><path d="M3 8V3h5"/>
+          <path d="m15 9 6-6"/><path d="M16 3h5v5"/>
+          <path d="m9 15-6 6"/><path d="M3 16v5h5"/>
+          <path d="m15 15 6 6"/><path d="M16 21h5v-5"/>
+        </svg>
+        <svg class="fullscreen-exit-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m3 3 6 6"/><path d="M9 4v5H4"/>
+          <path d="m21 3-6 6"/><path d="M15 4v5h5"/>
+          <path d="m3 21 6-6"/><path d="M9 20v-5H4"/>
+          <path d="m21 21-6-6"/><path d="M15 20v-5h5"/>
+        </svg>
+      </button>
+    </main>
+
+    <aside class="inspector" id="inspector">
+      <div class="inspector-head">
+        <div>
+          <span class="inspector-kicker">SESSION</span>
+          <strong>세션 정보</strong>
+        </div>
+        <button class="icon-button inspector-close" id="closeInspector" type="button" aria-label="정보 패널 닫기">×</button>
+      </div>
+
+      <div class="inspector-scroll">
+        <section class="inspector-section">
+          <div class="section-label-row">
+            <label for="subjectSelect">과목</label>
+            <button class="text-button" id="newSubjectBtn" type="button">+ 새 과목</button>
+          </div>
+          <select id="subjectSelect" class="field-select" disabled>
+            <option value="">미분류</option>
+          </select>
+        </section>
+
+        <section class="inspector-section professor-section hidden">
+          <div class="section-label-row">
+            <label for="professorInput">교수</label>
+            <span class="ai-label">ADAPTIVE ASR</span>
+          </div>
+          <input id="professorInput" list="professorOptions" type="text" placeholder="예: 김OO 교수" disabled />
+          <datalist id="professorOptions"></datalist>
+          <div class="professor-adapter-mini" id="professorAdapterMini">교수를 지정하면 수정된 SEG가 자동 학습 데이터가 됩니다.</div>
+          <p class="helper-text">과목별 교수 프로필에 음성 correction을 모으고, 검증 CER가 좋아진 LoRA만 자동 승격합니다.</p>
+        </section>
+
+        <section class="inspector-section">
+          <div class="section-label-row">
+            <label>태그</label>
+            <span class="ai-label">USER</span>
+          </div>
+          <div class="tag-list" id="tagList"></div>
+          <div class="tag-input-row">
+            <input id="tagInput" type="text" placeholder="태그 추가 후 Enter" disabled />
+            <button id="addTagBtn" type="button" disabled>+</button>
+          </div>
+          <p class="helper-text">태그는 사용자가 직접 관리하며 ASR 처리와는 분리됩니다.</p>
+        </section>
+
+        <section class="inspector-section">
+          <label>세션 설명</label>
+          <div class="description-box" id="sessionDescription">세션 설명이 있으면 여기에 표시됩니다.</div>
+        </section>
+        <section class="inspector-section">
+          <label>ASR 엔진</label>
+          <div class="description-box">Whisper Large-v3 FP16 · whisper.cpp HIP · 단일 ASR</div>
+          <p class="helper-text">오디오 전처리는 내부 기본값으로 자동 적용되며, lecture_raw.wav 원본은 변경하지 않습니다.</p>
+        </section>
+
+        <section class="inspector-section">
+          <label>처리 정보</label>
+          <dl class="metadata-grid">
+            <div><dt>상태</dt><dd id="metaStatus">—</dd></div>
+            <div><dt>날짜</dt><dd id="metaDate">—</dd></div>
+            <div><dt>음성</dt><dd id="metaDuration">—</dd></div>
+            <div><dt>문장</dt><dd id="metaSegments">—</dd></div>
+            <div><dt>수동 수정</dt><dd id="metaManual">—</dd></div>
+            <div><dt>언어</dt><dd>Korean</dd></div>
+          </dl>
+        </section>
+
+        <section class="inspector-section audit-section">
+          <label>ASR</label>
+          <p class="helper-text">Whisper Large-v3 하나만 사용합니다. 모델별 전사 레이어와 색상 구분은 제거되었습니다.</p>
+          <div class="audit-stack">
+            <span class="audit-item"><i></i>Whisper Large-v3 FP16 · whisper.cpp HIP</span>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <div class="modal-backdrop hidden" id="sessionModalBackdrop" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newSessionTitle">
+      <button class="modal-close" data-close-modal="session" type="button">×</button>
+      <span class="modal-kicker">NEW RECORDING</span>
+      <h2 id="newSessionTitle">새 세션</h2>
+      <p>과목을 고르고 제목을 입력하면 바로 녹음을 시작합니다.</p>
+      <form id="newSessionForm">
+        <label class="form-field">
+          <span>과목</span>
+          <select id="newSessionSubject"><option value="">미분류</option></select>
+        </label>
+        <label class="form-field">
+          <span>세션 제목</span>
+          <input id="newSessionName" type="text" placeholder="예: Coordinate Frame과 Relative Pose" autocomplete="off" required />
+        </label>
+        <button class="modal-primary" id="startRecordingBtn" type="submit">
+          <span class="record-dot"></span>
+          녹음 시작
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="subjectModalBackdrop" role="presentation">
+    <div class="modal small" role="dialog" aria-modal="true" aria-labelledby="newSubjectTitle">
+      <button class="modal-close" data-close-modal="subject" type="button">×</button>
+      <span class="modal-kicker">NEW SUBJECT</span>
+      <h2 id="newSubjectTitle">과목 만들기</h2>
+      <form id="newSubjectForm">
+        <div class="emoji-name-row">
+          <label class="form-field emoji-field">
+            <span>아이콘</span>
+            <input id="subjectEmoji" type="text" value="📘" maxlength="8" />
+          </label>
+          <label class="form-field grow">
+            <span>과목명</span>
+            <input id="subjectName" type="text" placeholder="예: 로보틱스" required />
+          </label>
+        </div>
+        <label class="form-field">
+          <span>학기</span>
+          <input id="subjectSemester" type="text" placeholder="예: 2026-2" />
+        </label>
+        <label class="form-field">
+          <span>교수</span>
+          <input id="subjectProfessor" list="professorOptions" type="text" placeholder="예: 김OO 교수" />
+        </label>
+        <button class="modal-primary" type="submit">과목 추가</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="shutdown-overlay hidden" id="shutdownOverlay">
+    <div class="shutdown-card">
+      <div class="shutdown-spinner"></div>
+      <strong>Local Clova 종료 완료</strong>
+      <span>Local Clova 런타임을 종료하고 있습니다.<br/>이 탭을 닫아도 됩니다.</span>
+    </div>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="/ui/app.js?v=8.2-epsilon4" defer></script>
+</body>
+</html>

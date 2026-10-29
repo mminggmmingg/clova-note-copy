@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+
+# Model weights (download separately)
+Qwen3-ASR-1.7B/
+batisay-ko-large/
+models/
+*.safetensors
+*.bin
+*.gguf
+
+# Third-party clones (whisper.cpp, VibeVoice)
+external/
+
+# Third-party binaries
+tools/deep-filter
+
+# Runtime state: control tokens, capture metadata
+.runtime-*/
+
+# Personal / lecture data: recordings, transcripts, professors, PDFs
+data/
+pdfs/
+audio/
+bench_results/
+true.txt
+
+# Logs, backups, archives
+logs/
+*.log
+*.pid
+backups/
+*.zip

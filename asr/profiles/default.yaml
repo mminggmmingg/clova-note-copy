@@ -1,0 +1,19 @@
+{
+  "schema": "v8.2-delta-asr-profile-v1",
+  "profile_id": "local-clova-default",
+  "description": "V8.2-delta full migration: Qwen realtime preview, committed BatiSay and Professor LoRA adaptation all run through registry adapters; stable gamma audio/VAD remains frozen.",
+  "slots": {
+    "preview": {
+      "engine": "qwen3-asr-1.7b",
+      "purpose": "realtime_unfixed_text"
+    },
+    "committed": {
+      "engine": "batisay-ko-large",
+      "purpose": "committed_segment_transcript"
+    },
+    "adaptation": {
+      "engine": "professor-lora",
+      "purpose": "human_correction_supervision"
+    }
+  }
+}
