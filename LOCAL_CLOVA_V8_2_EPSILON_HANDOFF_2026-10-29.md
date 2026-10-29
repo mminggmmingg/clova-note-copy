@@ -225,6 +225,29 @@ native_audio_daemon_v8_2_beta.py
 - 루트에 버전별 사본이 매우 많음 (`run_clova_v3` ~ `v8_2_gamma`, launcher 20여 개). 이제 git이 있으니 현재 파일만 남기고 정리 가능.
 - 현재 버전 파일 이름이 실제 버전과 안 맞음 (3절 참고).
 
+### 7.7 2026-10-29 코드 리뷰 — 고친 것 / 남은 것
+
+`run_clova_v8_2_gamma.py`에서 고친 것. 수정 전 코드와 같은 이미지(`local-clova:rocm-v8-2-gamma-hotfix6`) scratch 컨테이너에서 비교했고, 실제 강의 RAW 240초를 `/api/chunk`로 흘려 확인:
+
+| 문제 | 수정 | 검증 |
+|---|---|---|
+| 세그먼트 경계에서 `frontend_preroll`이 갱신 안 됨 → 다음 문장의 frontend 버퍼 길이가 어긋나 `segments_frontend/*.wav`가 raw로 바뀐 채 webrtc로 기록됨 (10/27 세션 598개 중 283개) | 경계 두 곳에서 `frontend_preroll`도 같이 설정 | 같은 오디오: raw 세그먼트 15개 바이트 동일(경계 불변), fallback 10 → 0 |
+| Whisper worker가 저장 중 예외 하나로 죽음 → 이후 세그먼트 전부 pending 고착 | `except`로 기록 후 pending 해제, worker 유지 | 주입한 저장 실패 후에도 다음 세그먼트 처리 |
+| `update_session_metadata`가 session.json을 truncate 방식으로 씀 → 동시 읽기/중간 kill 시 `{}`로 읽혀 메타데이터 유실 | `_write_json_path`(tmp + replace) 사용, tmp 이름을 writer별로 고유하게 | 동시 쓰기 테스트: 수정 전 tags 유실, 수정 후 유지 |
+| 헤더 없는 `/api/chunk`(옛 브라우저 경로)가 stereo RAW에 mono를 덧붙이고 헤더를 1ch로 덮어씀 | 비-native chunk는 410으로 거부, 레거시 분기 제거 | 수정 전 200 + RAW 생성, 수정 후 410 |
+| `/api/library`(UI 7초마다)가 모든 세션 transcript.jsonl(90MB) 전부 재파싱 | `(size, mtime_ns)` 기준 통계 캐시. `/api/segments`의 중복 파싱도 같이 해소 | 응답 동일, 1918ms → 8ms(warm) |
+| chunk 응답마다 전체 transcript join + 미사용 `model_wav` 계산 | 작은 ack만 반환, 미사용 계산 제거 | — |
+| query의 `session_id`를 그대로 경로로 사용 (`../`) | `SESSION_ID_RE` 검증 | `..` 거부, 정상 id 로드 |
+| capture 시작 실패 시 worker 스레드 2개 누수 | 실패 시 종료 sentinel 전달 | — |
+
+남은 것 (결정/추가 작업 필요):
+
+- **네트워크 노출:** Flask `-p 8000:8000`, whisper `--host 0.0.0.0`, host control `0.0.0.0:8765` → 같은 Wi-Fi에서 인증 없이 강의 목록/오디오 조회, 세션 삭제, 앱 종료 가능. 태블릿 등 다른 기기에서 UI를 쓰는지에 따라 바인딩 방식 결정 필요.
+- Whisper final 결과에 반복 루프 검사 없음 (preview만 있음). 감지 시 정책(재시도/표시) 결정 필요.
+- Stop 시 Flask 대기(25s) < 데몬 drain(최대 30s+) → backlog가 크면 꼬리 구간 전사 누락 가능.
+- `sentence_audio` 버퍼를 chunk마다 전체 복사(O(n²)) — Segmenter 영역이라 이번엔 안 건드림.
+- Qwen/registry 잔재 코드 (7.3과 같이 정리).
+
 ---
 
 ## 8. 다음 할 일 (우선순위)
@@ -232,6 +255,7 @@ native_audio_daemon_v8_2_beta.py
 ```text
 0. (완료) NATIVE STATUS WARN race 수정 (7.1), UI status poll / 캡처 정지 경고 복원 (7.6)
    → 다음 실제 녹음에서: 데몬 로그에 NATIVE STATUS WARN 0회, UI가 녹음 중 가볍게 유지되는지, 새 세그먼트·미리보기가 정상으로 뜨는지 확인
+0-1. (완료) 코드 리뷰 수정 (7.7). 네트워크 노출(7.7 남은 것 첫 항목)은 사용 방식 확인 후 결정
 1. 오래된 UI 테스트(`test-v8-beta*/gamma-ui-core.py`) 정리 — 현재 UI 기준으로 갱신하거나 제거
 2. Professor LoRA 방향 결정 (7.2) — Whisper adaptation으로 옮길지
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)

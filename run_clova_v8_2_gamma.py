@@ -64,7 +64,7 @@ except Exception as _peft_import_error:
     print("[ADAPTIVE ASR] PEFT unavailable:", repr(_peft_import_error), flush=True)
 
 from audio_enhance_v7_9 import enhance_segment
-from audio_capture_v8 import append_float32_mono_wav, normalize_stt_audio_source, wav_frame_count
+from audio_capture_v8 import normalize_stt_audio_source, wav_frame_count
 from asr.registry import build_default_registry
 from asr.schema import CANONICAL_ASR_SCHEMA
 
@@ -695,8 +695,10 @@ def _write_json_path(path, data):
         exist_ok=True,
     )
 
-    tmp = path.with_suffix(
-        path.suffix + ".tmp"
+    # Per-writer tmp name: with one shared "<name>.tmp", two unsynchronized
+    # writers can replace() each other's tmp away (FileNotFoundError).
+    tmp = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     )
 
     tmp.write_text(
@@ -2216,14 +2218,9 @@ def update_session_metadata(s, **extra):
 
     data.update(extra)
 
-    path.write_text(
-        json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    # Atomic replace: this runs every ~5 s while recording, and a truncated
+    # session.json would be read back as {} and lose title/tags/pdf_ids.
+    _write_json_path(path, data)
 
 
 # =========================================================
@@ -3336,6 +3333,20 @@ def _sentence_worker_loop(s):
                 "audio=raw",
                 flush=True,
             )
+        except Exception as exc:
+            # This is the session's only ASR worker: an escaping exception
+            # would silently stop transcription for every later segment and
+            # leave pending_count stuck. The segment WAV is already on disk.
+            print(
+                "[SEGMENT SAVE ERROR]",
+                f"segment={index}",
+                repr(exc),
+                flush=True,
+            )
+            with s.lock:
+                if index - 1 < len(s.committed):
+                    s.committed[index - 1] = final_text
+                s.pending_segments.pop(index, None)
         finally:
             s.sentence_queue.task_done()
 
@@ -3523,6 +3534,13 @@ def api_start():
         )
     except Exception as exc:
         s.recording = False
+        # Release the two per-session workers started above; otherwise every
+        # failed Start leaves them blocked on their queues forever.
+        for q in (s.sentence_queue, s.whisper_preview_queue):
+            try:
+                q.put_nowait(None)
+            except queue.Full:
+                pass
         update_session_metadata(
             s,
             capture_backend=CAPTURE_BACKEND,
@@ -3766,13 +3784,15 @@ def api_chunk():
                 "invalid session_id"
         }), 400
 
-    client_id = str(
-        request.args.get("client_id")
-        or ""
-    ).strip()[:128]
-
-    native_capture = request.headers.get("X-Clova-Native-Capture", "") == "1"
-    if native_capture and request.headers.get("X-Clova-Token", "") != _control_token():
+    # V8.2: the host native daemon is the only audio source. The old browser
+    # float32 ingest appended mono PCM to lecture_raw.wav (rewriting its header
+    # as 1-channel) while the daemon appends stereo frames to the same file,
+    # which corrupts the authoritative RAW. Refuse it outright.
+    if request.headers.get("X-Clova-Native-Capture", "") != "1":
+        return jsonify({
+            "error": "browser audio ingest was removed in V8.2; audio comes from native capture"
+        }), 410
+    if request.headers.get("X-Clova-Token", "") != _control_token():
         return jsonify({"error": "forbidden native capture"}), 403
 
     with s.lock:
@@ -3781,65 +3801,37 @@ def api_chunk():
                 "error": "session is stopped; resume it before sending audio"
             }), 409
 
-        if (
-            not native_capture
-            and s.recording_client_id
-            and client_id
-            and client_id != s.recording_client_id
-        ):
-            return jsonify({
-                "error": "recording is owned by another browser capture"
-            }), 409
-
-        if not native_capture and client_id and not s.recording_client_id:
-            s.recording_client_id = client_id
-
         s.last_chunk_monotonic = time.monotonic()
 
     raw = request.get_data(
         cache=False
     )
 
-    native_pcm16 = None
-    native_channels = 1
-    if native_capture:
+    try:
+        native_channels = int(request.headers.get("X-Clova-Channels", "1") or 1)
+    except Exception:
+        return jsonify({"error": "invalid native channel count"}), 400
+    if native_channels not in (1, 2):
+        return jsonify({"error": f"unsupported native channels={native_channels}"}), 400
+    if len(raw) % (2 * native_channels):
+        return jsonify({"error": "invalid interleaved native s16le frames"}), 400
+    native_pcm16 = np.frombuffer(raw, dtype="<i2")
+    native_frames = native_pcm16.reshape(-1, native_channels)
+    # Provenance/segment compatibility signal. The authoritative capture is
+    # the stereo lecture_raw.wav on disk; existing segment/VAD/ASR code stays mono.
+    wav = native_frames.astype(np.float32).mean(axis=1) / np.float32(32768.0)
+    try:
+        native_chunk_start = max(0, int(request.headers.get("X-Clova-Sample-Start", "0")))
+    except Exception:
+        return jsonify({"error": "invalid native sample start"}), 400
+    native_chunk_end = native_chunk_start + int(native_frames.shape[0])
+    supplied_end = request.headers.get("X-Clova-Sample-End")
+    if supplied_end not in (None, ""):
         try:
-            native_channels = int(request.headers.get("X-Clova-Channels", "1") or 1)
+            if int(supplied_end) != native_chunk_end:
+                return jsonify({"error": "native frame range mismatch"}), 400
         except Exception:
-            return jsonify({"error": "invalid native channel count"}), 400
-        if native_channels not in (1, 2):
-            return jsonify({"error": f"unsupported native channels={native_channels}"}), 400
-        if len(raw) % (2 * native_channels):
-            return jsonify({"error": "invalid interleaved native s16le frames"}), 400
-        native_pcm16 = np.frombuffer(raw, dtype="<i2")
-        native_frames = native_pcm16.reshape(-1, native_channels)
-        # Provenance/segment compatibility signal. The authoritative capture is
-        # the stereo lecture_raw.wav on disk; existing segment/VAD/ASR code stays mono.
-        wav = native_frames.astype(np.float32).mean(axis=1) / np.float32(32768.0)
-        try:
-            native_chunk_start = max(0, int(request.headers.get("X-Clova-Sample-Start", "0")))
-        except Exception:
-            return jsonify({"error": "invalid native sample start"}), 400
-        native_chunk_end = native_chunk_start + int(native_frames.shape[0])
-        supplied_end = request.headers.get("X-Clova-Sample-End")
-        if supplied_end not in (None, ""):
-            try:
-                if int(supplied_end) != native_chunk_end:
-                    return jsonify({"error": "native frame range mismatch"}), 400
-            except Exception:
-                return jsonify({"error": "invalid native sample end"}), 400
-    else:
-        if len(raw) % 4:
-            return jsonify({
-                "error":
-                    "invalid float32 audio"
-            }), 400
-        wav = np.frombuffer(
-            raw,
-            dtype=np.float32,
-        ).copy()
-        native_chunk_start = None
-        native_chunk_end = None
+            return jsonify({"error": "invalid native sample end"}), 400
 
     # `wav` is a time-aligned mono view used by the legacy segment/provenance
     # machinery. lecture_raw.wav remains the bit-faithful authoritative stereo
@@ -3850,7 +3842,6 @@ def api_chunk():
         native_pcm16=native_pcm16,
         native_channels=native_channels,
     )
-    model_wav = _frontend_asr_audio(frontend_wav, frontend_effective)
     vad_wav = _frontend_vad_audio(frontend_wav, frontend_effective)
 
     boundary_index = None
@@ -3865,34 +3856,19 @@ def api_chunk():
                 "error": "session stopped before this audio chunk was committed"
             }), 409
 
-        if native_capture:
-            # V8.2-beta: the host daemon has ALREADY durably appended these
-            # samples to lecture_raw.wav. Flask consumes the same ordered chunk
-            # for VAD/Qwen/BatiSay only; it must never write the RAW file again.
-            chunk_start_sample = int(native_chunk_start)
-            s.recording_sample_cursor = max(
-                int(s.recording_sample_cursor),
-                int(native_chunk_end),
-            )
-            s.continuous_raw_samples = max(
-                int(s.continuous_raw_samples),
-                int(s.recording_sample_cursor) - int(s.continuous_raw_start_sample),
-            )
-            s.recording_time_basis = "native_pipewire_frames"
-        else:
-            # Backward-compatible browser ingest path. V8.2 UI never calls it,
-            # but keeping it makes older diagnostic clients usable.
-            chunk_start_sample = int(s.recording_sample_cursor)
-            continuous_path = s.root / "lecture_raw.wav"
-            if s.continuous_raw_samples <= 0 and not continuous_path.exists():
-                s.continuous_raw_start_sample = chunk_start_sample
-            appended = append_float32_mono_wav(continuous_path, wav, sample_rate=SR)
-            if appended != len(wav):
-                raise RuntimeError(
-                    f"continuous raw append mismatch {appended} != {len(wav)}"
-                )
-            s.continuous_raw_samples += appended
-            s.recording_sample_cursor += len(wav)
+        # V8.2-beta: the host daemon has ALREADY durably appended these
+        # samples to lecture_raw.wav. Flask consumes the same ordered chunk
+        # for VAD/ASR only; it must never write the RAW file again.
+        chunk_start_sample = int(native_chunk_start)
+        s.recording_sample_cursor = max(
+            int(s.recording_sample_cursor),
+            int(native_chunk_end),
+        )
+        s.continuous_raw_samples = max(
+            int(s.continuous_raw_samples),
+            int(s.recording_sample_cursor) - int(s.continuous_raw_start_sample),
+        )
+        s.recording_time_basis = "native_pipewire_frames"
 
         # Crash-tolerant durable checkpoint without rewriting JSON per chunk.
         if (
@@ -3901,8 +3877,8 @@ def api_chunk():
         ):
             update_session_metadata(
                 s,
-                capture_backend=(CAPTURE_BACKEND if native_capture else "legacy_browser_audio"),
-                native_capture_schema=(NATIVE_CAPTURE_SCHEMA if native_capture else None),
+                capture_backend=CAPTURE_BACKEND,
+                native_capture_schema=NATIVE_CAPTURE_SCHEMA,
             )
             s.recording_checkpoint_sample = int(s.recording_sample_cursor)
 
@@ -4067,7 +4043,11 @@ def api_chunk():
                 max_pre = int(
                     SR * PREROLL_SEC
                 )
+                # Keep both prerolls the same length; otherwise the next
+                # sentence's frontend buffer is shorter than its raw buffer and
+                # enqueue_sentence() silently swaps the derivative for raw.
                 s.preroll = wav[-max_pre:].copy()
+                s.frontend_preroll = frontend_wav[-max_pre:].copy()
 
         # If the lecturer never pauses long enough, force a safe boundary so
         # BatiSay never receives an unbounded segment.
@@ -4087,6 +4067,7 @@ def api_chunk():
                 SR * PREROLL_SEC
             )
             s.preroll = wav[-max_pre:].copy()
+            s.frontend_preroll = frontend_wav[-max_pre:].copy()
 
         # -------------------------------------------------
         # Qwen-only split.
@@ -4105,42 +4086,9 @@ def api_chunk():
 
             split_qwen_state(s)
 
-        committed = "\n".join(
-            str(x)
-            for x in s.committed
-            if str(x or "").strip()
-        )
-
-        unfixed = (
-            current_qwen_text(s)
-            if s.active
-            else ""
-        )
-
+        # The daemon discards this body. Keep it O(1): the full transcript is
+        # served by /api/segments, not rebuilt for every 250 ms chunk.
         return jsonify({
-            "title":
-                s.title,
-
-            "language":
-                FORCE_LANGUAGE,
-
-            "committed_text":
-                committed,
-
-            "unfixed_text":
-                unfixed,
-
-            "text":
-                (
-                    committed
-                    + (
-                        "\n"
-                        if committed and unfixed
-                        else ""
-                    )
-                    + unfixed
-                ),
-
             "vad_active":
                 s.active,
 
@@ -7087,7 +7035,15 @@ def _base_texts_from_records(records):
     return result
 
 
+# Session ids come from query strings and become DATA_ROOT / sid paths (and
+# trash targets on delete). One path component, no separators or leading dot.
+SESSION_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
+
+
 def load_session_from_disk(session_id):
+
+    if not SESSION_ID_RE.fullmatch(str(session_id or "")):
+        return None
 
     root = DATA_ROOT / session_id
 
@@ -7268,6 +7224,58 @@ def hydrate_sessions_from_disk():
     )
 
 
+_TRANSCRIPT_STATS_CACHE = {}
+_TRANSCRIPT_STATS_LOCK = threading.Lock()
+
+
+def _transcript_stats(transcript_path):
+    """Return (record_count, duration_sec, segment_ids) for transcript.jsonl.
+
+    /api/library summarizes every session every few seconds. Re-parsing every
+    transcript (word maps and token chunks included, ~90 MB across sessions)
+    held the GIL for about a second per call, so results are cached by the
+    file's (size, mtime_ns) and recomputed only after it changes.
+    """
+    try:
+        st = transcript_path.stat()
+    except FileNotFoundError:
+        return 0, 0.0, frozenset()
+    key = (st.st_size, st.st_mtime_ns)
+    with _TRANSCRIPT_STATS_LOCK:
+        hit = _TRANSCRIPT_STATS_CACHE.get(transcript_path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+
+    count = 0
+    duration = 0.0
+    segment_ids = set()
+    for line in transcript_path.read_text(
+        encoding="utf-8"
+    ).splitlines():
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(record, dict):
+            continue
+        count += 1
+        try:
+            duration += float(
+                record.get("duration_sec")
+                or 0.0
+            )
+        except Exception:
+            pass
+        segment = str(record.get("segment") or count)
+        if segment.isdigit():
+            segment_ids.add(int(segment))
+
+    value = (count, duration, frozenset(segment_ids))
+    with _TRANSCRIPT_STATS_LOCK:
+        _TRANSCRIPT_STATS_CACHE[transcript_path] = (key, value)
+    return value
+
+
 def _session_summary_from_root(root):
 
     meta = _read_json_path(
@@ -7283,30 +7291,9 @@ def _session_summary_from_root(root):
         or root.name
     )
 
-    records = []
-    transcript_path = root / "transcript.jsonl"
-
-    if transcript_path.exists():
-        for line in transcript_path.read_text(
-            encoding="utf-8"
-        ).splitlines():
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    records.append(obj)
-            except Exception:
-                pass
-
-    duration = 0.0
-
-    for record in records:
-        try:
-            duration += float(
-                record.get("duration_sec")
-                or 0.0
-            )
-        except Exception:
-            pass
+    record_count, duration, completed_ids = _transcript_stats(
+        root / "transcript.jsonl"
+    )
 
     edits = _read_json_path(
         root / "manual_edits.json",
@@ -7348,12 +7335,6 @@ def _session_summary_from_root(root):
         # Pending WAVs are already saved, but transcript.jsonl records only
         # appear after background processing completes. Include them in live
         # library stats without double counting completed records.
-        completed_ids = {
-            int(record.get("segment") or pos)
-            for pos, record in enumerate(records, start=1)
-            if str(record.get("segment") or pos).isdigit()
-        }
-
         duration += sum(
             float(item.get("duration_sec") or 0.0)
             for idx, item in in_memory.pending_segments.items()
@@ -7405,15 +7386,15 @@ def _session_summary_from_root(root):
         "segment_count": max(
             0,
             (
-                max(len(records), len(in_memory.committed))
+                max(record_count, len(in_memory.committed))
                 if in_memory is not None
-                else len(records)
+                else record_count
             ) - len(deleted_ids),
         ),
         "total_segment_count": (
-            max(len(records), len(in_memory.committed))
+            max(record_count, len(in_memory.committed))
             if in_memory is not None
-            else len(records)
+            else record_count
         ),
         "deleted_count": len(deleted_ids),
         "pending_count": pending_count,
