@@ -229,7 +229,8 @@ def main() -> int:
     ap.add_argument("--project", type=Path, required=True)
     ap.add_argument("--token-file", type=Path, required=True)
     ap.add_argument("--container", default="local-clova-v8-2-gamma")
-    ap.add_argument("--host", default="0.0.0.0")
+    # The launcher passes the Docker bridge gateway; never default to the LAN.
+    ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--audio-target", default=os.environ.get("CLOVA_AUDIO_TARGET", ""))
     ap.add_argument("--test-asr-stall-sec", type=float, default=float(os.environ.get("CLOVA_TEST_ASR_STALL_SEC", "0") or 0))

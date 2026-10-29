@@ -94,14 +94,37 @@ if not math.isfinite(x) or x < -30.0 or x > 30.0:
 PY
 
 web_ready(){ curl -fsS --max-time 2 http://127.0.0.1:8000/ >/dev/null 2>&1; }
-control_body(){ curl -fsS --max-time 2 http://127.0.0.1:${CONTROL_PORT}/health 2>/dev/null || true; }
+control_body(){ curl -fsS --max-time 2 http://${BRIDGE_IP}:${CONTROL_PORT}/health 2>/dev/null || true; }
 control_ready(){ local body; body="$(control_body)"; [[ "$body" == *'"version": "v8.2-gamma-control"'* ]] || [[ "$body" == *'"version":"v8.2-gamma-control"'* ]]; }
-whisper_ready(){ curl -fsS --max-time 2 "http://127.0.0.1:${WHISPER_PORT}/" >/dev/null 2>&1; }
+whisper_ready(){ curl -fsS --max-time 2 "http://${BRIDGE_IP}:${WHISPER_PORT}/" >/dev/null 2>&1; }
+listen_addrs(){ ss -ltnH "sport = :$1" 2>/dev/null | awk '{print $4}' | sort -u | paste -sd' '; }
 
 command -v docker >/dev/null 2>&1 || fail "docker not found"
 command -v curl >/dev/null 2>&1 || fail "curl not found"
 command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+command -v ss >/dev/null 2>&1 || fail "ss not found (iproute2)"
 command -v pw-record >/dev/null 2>&1 || fail "pw-record not found (PipeWire tools are required for V8.2-gamma)"
+
+# Single-laptop use: nothing listens on the LAN. The web UI is published on
+# 127.0.0.1 only; the host controller and whisper-server listen on the Docker
+# bridge gateway, which the container reaches as host.docker.internal.
+BRIDGE_IP="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+[[ "$BRIDGE_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "could not determine the Docker bridge gateway IP"
+
+# An instance started by an older launcher listens on 0.0.0.0. Reusing it would
+# keep the LAN exposure, and killing it could cut a live recording, so stop here.
+for port in "$CONTROL_PORT" "$WHISPER_PORT"; do
+  addrs="$(listen_addrs "$port")"
+  if [[ -n "$addrs" && "$addrs" != "${BRIDGE_IP}:${port}" ]]; then
+    fail "Port :${port} is listening on '${addrs}' (older launcher). Shut down Local Clova from the app (or stop that process), then start again."
+  fi
+done
+if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+  published="$(docker port "$CONTAINER" 8000/tcp 2>/dev/null | sort -u | paste -sd' ')"
+  if [[ "$published" != "127.0.0.1:8000" ]]; then
+    fail "Container $CONTAINER publishes :8000 on '${published}' (older launcher). Shut down Local Clova from the app, then start again."
+  fi
+fi
 [[ -d "$CLOVA_DIR" ]] || fail "Clova directory missing: $CLOVA_DIR"
 [[ -f "$CLOVA_DIR/run_clova_v8_2_gamma.py" ]] || fail "Missing V8.2-gamma backend"
 [[ -f "$CLOVA_DIR/native_audio_daemon_v8_2_beta.py" ]] || fail "Missing V8.2-beta native audio daemon"
@@ -150,6 +173,7 @@ else
       --project "$CLOVA_DIR" \
       --token-file "$TOKEN_FILE" \
       --container "$CONTAINER" \
+      --host "$BRIDGE_IP" \
       --port "$CONTROL_PORT" \
       >"$CONTROL_LOG" 2>&1 &
   echo $! > "$CONTROL_PID_FILE"
@@ -174,7 +198,7 @@ else
   nohup "$WHISPER_SERVER_BIN" \
     -m "$WHISPER_MODEL" \
     -l ko -mc 0 -fa -bs 5 -bo 5 -t 4 \
-    --host 0.0.0.0 --port "$WHISPER_PORT" \
+    --host "$BRIDGE_IP" --port "$WHISPER_PORT" \
     >"$WHISPER_LOG" 2>&1 &
   echo $! > "$WHISPER_PID_FILE"
   for _ in $(seq 1 120); do whisper_ready && break; sleep .5; done
@@ -193,8 +217,8 @@ else
     --device=/dev/kfd --device=/dev/dri \
     --group-add "${VIDEO_GID:-44}" --group-add "${RENDER_GID:-992}" \
     --ipc=host --shm-size 16G --security-opt seccomp=unconfined \
-    --add-host=host.docker.internal:host-gateway \
-    -v "$CLOVA_DIR:/workspace" -p 8000:8000 \
+    --add-host=host.docker.internal:"$BRIDGE_IP" \
+    -v "$CLOVA_DIR:/workspace" -p 127.0.0.1:8000:8000 \
     -e HOST_CONTROL_URL="http://host.docker.internal:${CONTROL_PORT}" \
     -e CLOVA_CONTROL_TOKEN="$CONTROL_TOKEN" \
     -e NATIVE_CAPTURE_TIMEOUT_SEC="8" \
