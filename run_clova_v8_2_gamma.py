@@ -133,6 +133,10 @@ WHISPER_PREVIEW_WINDOW_SEC = min(6.0, max(2.0, float(os.getenv("WHISPER_PREVIEW_
 WHISPER_PREVIEW_TIMEOUT_SEC = min(8.0, max(2.0, float(os.getenv("WHISPER_PREVIEW_TIMEOUT_SEC", "6.0"))))
 WHISPER_PREVIEW_MAX_CHARS_PER_SEC = max(10.0, float(os.getenv("WHISPER_PREVIEW_MAX_CHARS_PER_SEC", "18.0")))
 WHISPER_INFERENCE_LOCK = threading.Lock()
+# One retry for a final that looks like a repetition loop. Re-decoding stored
+# loops with the production settings reproduced 16/16 of them; sampling at
+# T=0.4 with best_of=5 broke 12/16, often recovering real speech the loop hid.
+WHISPER_LOOP_RETRY_PARAMS = {"temperature": "0.4", "best_of": "5"}
 
 # V7.8 lecture audio enhancement. Raw segment WAVs remain the immutable
 # source of truth; cleaned derivatives are stored separately.
@@ -1724,24 +1728,59 @@ def _repetition_tokens(text):
 def detect_repetition_loop(text):
     """Return (is_degenerate, reason) for obvious ASR repetition loops."""
 
-    tokens = _repetition_tokens(text)
+    return _detect_repetition_in_tokens(_repetition_tokens(text))
+
+
+def _whisper_loop_tokens(text):
+    # Whisper punctuates; drop tokens with no letter or digit.
+    return [
+        tok
+        for tok in _repetition_tokens(text)
+        if any(ch.isalnum() for ch in tok)
+    ]
+
+
+def detect_whisper_repetition_loop(text):
+    """detect_repetition_loop() for punctuated Whisper output.
+
+    The BatiSay-era tokenizer counts every punctuation mark as a token, so
+    Whisper's commas, quotes and periods in counting ("1, 2, 3"), name lists
+    or quoted terms looked like loops; only letter/digit tokens are compared.
+    Lectures also read out real digit sequences ("1, 0, 0, 0, 0", "2^64-1 =
+    1 1 1 ..."), so runs made only of digits need 12 repeats, while
+    hallucinated runs seen in practice were 15-30 long ("5 5 5 ...").
+    """
+
+    return _detect_repetition_in_tokens(
+        _whisper_loop_tokens(text),
+        digit_min=12,
+    )
+
+
+def _detect_repetition_in_tokens(tokens, *, digit_min=5):
 
     if len(tokens) < 8:
         return False, ""
 
     # 1) One token repeated many times in a row: "인류 인류 인류 ..."
     run = 1
-    max_run = 1
+    word_run = 1
+    digit_run = 1
 
     for i in range(1, len(tokens)):
         if tokens[i] == tokens[i - 1]:
             run += 1
-            max_run = max(max_run, run)
         else:
             run = 1
+        if tokens[i].isdigit():
+            digit_run = max(digit_run, run)
+        else:
+            word_run = max(word_run, run)
 
-    if max_run >= 5:
-        return True, f"same-token-run:{max_run}"
+    if word_run >= 5:
+        return True, f"same-token-run:{word_run}"
+    if digit_run >= digit_min:
+        return True, f"same-token-run:{digit_run}"
 
     # 2) A single token dominates an implausibly large portion of output.
     counts = {}
@@ -1754,7 +1793,7 @@ def detect_repetition_loop(text):
     )
 
     if (
-        dominant_count >= 10
+        dominant_count >= (max(10, 2 * digit_min) if dominant_token.isdigit() else 10)
         and dominant_count / len(tokens) >= 0.34
     ):
         return True, (
@@ -1779,10 +1818,15 @@ def detect_repetition_loop(text):
                 pos += width
 
             covered = reps * width
+            min_covered = (
+                max(8, digit_min)
+                if all(tok.isdigit() for tok in phrase)
+                else 8
+            )
 
             if (
                 reps >= 4
-                and covered >= 8
+                and covered >= min_covered
                 and covered / n_tokens >= 0.30
             ):
                 return True, (
@@ -2503,6 +2547,7 @@ def save_segment(
     final_source=None,
     segment_stt_rejected=False,
     segment_stt_reject_reason="",
+    segment_stt_loop_retry=None,
     processing_error="",
     denoise_meta=None,
     asr_audio_variant="clean",
@@ -2624,6 +2669,9 @@ def save_segment(
         "processing_error": processing_error or None,
         "created_at": _now_iso(),
     }
+    if segment_stt_loop_retry:
+        # Both the looping and the retried text, whichever was kept.
+        record["segment_stt_loop_retry"] = segment_stt_loop_retry
 
     transcript_file = (
         s.root
@@ -2833,7 +2881,7 @@ def enqueue_sentence(s, *, boundary_reason="vad"):
     return index
 
 
-def _whisper_request(file_tuple, *, timeout, response_format="json", word_timestamps=False):
+def _whisper_request(file_tuple, *, timeout, response_format="json", word_timestamps=False, extra=None):
     """Call the persistent whisper.cpp server and return its JSON payload.
 
     Preview requests stay lightweight JSON. Final committed requests use
@@ -2855,6 +2903,8 @@ def _whisper_request(file_tuple, *, timeout, response_format="json", word_timest
             "split_on_word": "true",
             "no_language_probabilities": "true",
         })
+    if extra:
+        data.update(extra)
 
     response = requests.post(
         WHISPER_SERVER_URL + "/inference",
@@ -3003,7 +3053,7 @@ def _whisper_verbose_word_chunks(payload):
     return result
 
 
-def _whisper_server_transcribe(wav_path):
+def _whisper_server_transcribe(wav_path, *, extra=None):
     """Final SEG text + canonical word timestamp chunks.
 
     Final work has priority over preview and uses the same resident Large-v3
@@ -3022,11 +3072,77 @@ def _whisper_server_transcribe(wav_path):
                 timeout=WHISPER_TIMEOUT_SEC,
                 response_format="verbose_json",
                 word_timestamps=True,
+                extra=extra,
             )
 
     text = _whisper_payload_text(payload)
     chunks = _whisper_verbose_word_chunks(payload)
     return text, chunks
+
+
+def _repetition_collapsed_chars(text):
+    """Characters left once immediately repeated tokens/phrases are collapsed."""
+    out = []
+    for tok in _whisper_loop_tokens(text):
+        out.append(tok)
+        for width in range(1, 7):
+            if len(out) >= 2 * width and out[-width:] == out[-2 * width:-width]:
+                del out[-width:]
+                break
+    return sum(len(tok) for tok in out)
+
+
+def _whisper_final_with_loop_retry(wav_path, index):
+    """Final transcription with one loop-breaking retry.
+
+    Returns (text, chunks, rejected, reject_reason, loop_retry). The retry is
+    accepted only if it no longer loops and keeps at least half of the
+    original's content once repeats are collapsed (one retry shrank a 14 s
+    segment to two words). Otherwise the original is kept and flagged as
+    rejected so the UI can mark it. loop_retry records both texts for audit.
+    """
+    text, chunks = _whisper_server_transcribe(wav_path)
+    bad, reason = detect_whisper_repetition_loop(text)
+    if not bad:
+        return text, chunks, False, "", None
+
+    print("[WHISPER LOOP DETECTED]", f"segment={index}", reason, flush=True)
+    loop_retry = {
+        "reason": reason,
+        "params": dict(WHISPER_LOOP_RETRY_PARAMS),
+        "original_text": text,
+        "accepted": False,
+    }
+    try:
+        retry_text, retry_chunks = _whisper_server_transcribe(
+            wav_path,
+            extra=WHISPER_LOOP_RETRY_PARAMS,
+        )
+    except Exception as exc:
+        loop_retry["error"] = repr(exc)
+        print("[WHISPER LOOP RETRY ERROR]", f"segment={index}", repr(exc), flush=True)
+        return text, chunks, True, reason, loop_retry
+
+    retry_bad, retry_reason = detect_whisper_repetition_loop(retry_text)
+    keeps_content = (
+        _repetition_collapsed_chars(retry_text)
+        >= 0.5 * _repetition_collapsed_chars(text)
+    )
+    loop_retry["retry_text"] = retry_text
+    loop_retry["retry_reason"] = retry_reason or ("" if keeps_content else "too_short")
+
+    if retry_text and not retry_bad and keeps_content:
+        loop_retry["accepted"] = True
+        print("[WHISPER LOOP RECOVERED]", f"segment={index}", flush=True)
+        return retry_text, retry_chunks, False, "", loop_retry
+
+    print(
+        "[WHISPER LOOP KEPT]",
+        f"segment={index}",
+        f"retry={loop_retry['retry_reason'] or 'empty'}",
+        flush=True,
+    )
+    return text, chunks, True, reason, loop_retry
 
 
 def _whisper_preview_audio_bytes(audio):
@@ -3242,6 +3358,9 @@ def _sentence_worker_loop(s):
         processing_error = ""
         segment_stt_raw = ""
         segment_stt_chunks = []
+        segment_stt_rejected = False
+        segment_stt_reject_reason = ""
+        segment_stt_loop_retry = None
         segment_stt_adapter = {"name": "whisper.cpp", "version": "large-v3-fp16", "professor_id": ""}
         denoise_meta = {
             "status": "internal_frontend_only",
@@ -3257,7 +3376,13 @@ def _sentence_worker_loop(s):
                     pending["audio_variant"] = "raw"
 
             wav_path = s.root / "segments" / f"{index:06d}.wav"
-            segment_stt_raw, segment_stt_chunks = _whisper_server_transcribe(wav_path)
+            (
+                segment_stt_raw,
+                segment_stt_chunks,
+                segment_stt_rejected,
+                segment_stt_reject_reason,
+                segment_stt_loop_retry,
+            ) = _whisper_final_with_loop_retry(wav_path, index)
             if not segment_stt_raw:
                 raise RuntimeError("Whisper returned empty transcript")
 
@@ -3278,8 +3403,8 @@ def _sentence_worker_loop(s):
                         "segment_stt_raw": segment_stt_raw,
                         "segment_stt_chunks": segment_stt_chunks,
                         "segment_stt_adapter": segment_stt_adapter,
-                        "segment_stt_rejected": False,
-                        "segment_stt_reject_reason": "",
+                        "segment_stt_rejected": segment_stt_rejected,
+                        "segment_stt_reject_reason": segment_stt_reject_reason,
                         "denoise": denoise_meta,
                         "audio_variant": "raw",
                         "requested_audio_source": "raw",
@@ -3309,8 +3434,9 @@ def _sentence_worker_loop(s):
                     segment_stt_adapter=segment_stt_adapter,
                     final_text=final_text,
                     final_source=final_source,
-                    segment_stt_rejected=False,
-                    segment_stt_reject_reason="",
+                    segment_stt_rejected=segment_stt_rejected,
+                    segment_stt_reject_reason=segment_stt_reject_reason,
+                    segment_stt_loop_retry=segment_stt_loop_retry,
                     processing_error=processing_error,
                     denoise_meta=denoise_meta,
                     asr_audio_variant=asr_audio_variant,

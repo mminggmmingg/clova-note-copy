@@ -2988,6 +2988,9 @@
     if (seg.manually_edited) return ["Human locked", "manual"];
     if (seg.pending) return ["Whisper…", "processing"];
     if (seg.final_source === "whisper_error") return ["Whisper · error", "warning"];
+    // Final still looked like a repetition loop after one retry; the text is
+    // Whisper's original output, kept but not trusted.
+    if (seg.segment_stt_rejected) return ["Whisper · 반복 의심", "warning"];
     return ["Whisper Large-v3", ""];
   }
 

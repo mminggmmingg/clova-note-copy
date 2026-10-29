@@ -244,9 +244,19 @@ native_audio_daemon_v8_2_beta.py
 
 네트워크 노출도 고침 (사용자 확인: 이 노트북에서만 사용): 예전에는 Flask `-p 8000:8000`, whisper `--host 0.0.0.0`, host control `0.0.0.0:8765`라서 같은 Wi-Fi에서 인증 없이 강의 목록/오디오 조회, 세션 삭제, 앱 종료가 가능했다. 지금은 3절의 바인딩. 테스트 포트로 확인: bridge의 controller는 컨테이너에서 200, LAN IP(10.162.x)로는 연결 거부, 127.0.0.1 퍼블리시도 LAN IP로는 거부. 예전 스택이 떠 있을 때 새 런처는 아무것도 시작하지 않고 멈춤.
 
+### 7.8 Whisper final 반복 루프 검사 — 2026-10-29 추가
+
+정책: 감지 → 다른 디코딩으로 1회 재시도 → 채택, 또는 원본 유지 + UI "Whisper · 반복 의심" 표시.
+
+- **검사기:** `detect_whisper_repetition_loop()`. BatiSay용 `detect_repetition_loop()`는 문장부호도 토큰으로 세서, 숫자 세기("1, 2, 3"), 이름 나열, 따옴표 문장을 루프로 오탐했다. Whisper용은 글자/숫자 토큰만 비교하고, 숫자만 반복되는 경우는 12회 이상일 때만 루프로 본다. 강의에서 실제로 읽는 "1, 0, 0, 0, 0"이나 "1 1 1 …"(2^64-1)이 있기 때문. BatiSay용 결과는 그대로(저장 데이터 기준 19건 동일).
+- **실측:** 저장된 Whisper final 8494개 중 13개(0.15%)가 걸림.
+- **재시도 설정:** `WHISPER_LOOP_RETRY_PARAMS = temperature 0.4, best_of 5`. 같은 설정으로 다시 돌리면 16/16 같은 루프가 재현됐고, 이 설정은 12/16을 풀었다. entropy_thold 2.8은 3/16, suppress_nst는 9/16이었고 "시청해주셔서 감사합니다" 환각도 나왔다.
+- **채택 조건:** 재시도 결과가 루프가 아니어야 하고, 원본에서 반복을 걷어낸 분량의 50% 이상이어야 한다. 재시도가 14초 세그먼트를 "노콜롬도요." 한 단어로 줄인 경우가 있었기 때문.
+- **기록:** transcript.jsonl의 `segment_stt_loop_retry`에 원본/재시도 텍스트, 이유, 채택 여부를 남긴다. 채택 안 되면 `segment_stt_rejected=True`이고 word map은 만들지 않는다.
+- **검증:** 실제 worker를 scratch 컨테이너 + 임시 whisper-server(127.0.0.1:18178)로 실행. 걸린 13개 중 11개 복원("아 어 어 …" ×26 → "어... 그렇고, 마치 이제, 이 영상은…" 같은 실제 강의 내용), 2개 원본 유지 + 표시. 정상 세그먼트 6개는 재시도 없이 저장된 결과와 동일. 재시도는 sampling이라 매번 결과가 조금씩 다르다.
+
 남은 것 (결정/추가 작업 필요):
 
-- Whisper final 결과에 반복 루프 검사 없음 (preview만 있음). 감지 시 정책(재시도/표시) 결정 필요.
 - Stop 시 Flask 대기(25s) < 데몬 drain(최대 30s+) → backlog가 크면 꼬리 구간 전사 누락 가능.
 - `sentence_audio` 버퍼를 chunk마다 전체 복사(O(n²)) — Segmenter 영역이라 이번엔 안 건드림.
 - Qwen/registry 잔재 코드 (7.3과 같이 정리).
@@ -259,6 +269,7 @@ native_audio_daemon_v8_2_beta.py
 0. (완료) NATIVE STATUS WARN race 수정 (7.1), UI status poll / 캡처 정지 경고 복원 (7.6)
    → 다음 실제 녹음에서: 데몬 로그에 NATIVE STATUS WARN 0회, UI가 녹음 중 가볍게 유지되는지, 새 세그먼트·미리보기가 정상으로 뜨는지 확인
 0-1. (완료) 코드 리뷰 수정 + LAN 노출 차단 (7.7). 첫 실행 전에 앱에서 한 번 종료해야 새 바인딩이 적용됨
+0-2. (완료) Whisper final 반복 루프 검사 + 재시도 (7.8)
 1. 오래된 UI 테스트(`test-v8-beta*/gamma-ui-core.py`) 정리 — 현재 UI 기준으로 갱신하거나 제거
 2. Professor LoRA 방향 결정 (7.2) — Whisper adaptation으로 옮길지
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)
