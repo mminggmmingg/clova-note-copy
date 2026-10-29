@@ -6823,6 +6823,10 @@ def get_effective_segments(
             {},
         )
 
+        if not record and not pending and not edit and not str(base_text or "").strip():
+            # Gap left by an unreadable transcript line: nothing to show.
+            continue
+
         deleted_info = deleted_segments.get(key, {})
         deleted = bool(deleted_info)
         manually_edited = bool(edit)
@@ -7164,10 +7168,19 @@ def effective_transcript(s):
 # =========================================================
 
 def _base_texts_from_records(records):
+    """Return committed texts indexed by segment number (committed[n - 1]).
 
-    result = []
+    This used to be built in record order, skipping unreadable or empty
+    records, while get_effective_segments() reads list position as the
+    segment number and resume continues from len(committed). One damaged
+    transcript line then put every later text on its neighbour's audio and
+    made the next recorded segment reuse an existing number. Missing
+    segments stay as "" gaps.
+    """
 
-    for record in records:
+    by_segment = {}
+
+    for pos, record in enumerate(records, start=1):
 
         text = (
             record.get("final_text")
@@ -7178,10 +7191,18 @@ def _base_texts_from_records(records):
             or ""
         )
 
-        text = str(text).strip()
+        try:
+            idx = int(record.get("segment") or pos)
+        except Exception:
+            idx = pos
 
-        if text:
-            result.append(text)
+        if idx > 0:
+            by_segment[idx] = str(text).strip()
+
+    result = [""] * max(by_segment, default=0)
+
+    for idx, text in by_segment.items():
+        result[idx - 1] = text
 
     return result
 
