@@ -251,6 +251,10 @@ def main() -> int:
     sender_abort = threading.Event()
     data_ready = threading.Event()
     lock = threading.Lock()
+    # Sender and heartbeat threads both write the status file through one
+    # shared .tmp path; serialize snapshot+write so one replace() cannot
+    # move the other's .tmp away (FileNotFoundError) or land out of order.
+    status_lock = threading.Lock()
     chunk_frames = int(args.rate * args.chunk_ms / 1000)
     stats = {
         "sample_count": start_sample,
@@ -320,8 +324,9 @@ def main() -> int:
 
     def save_status(active=True):
         try:
-            args.status_file.parent.mkdir(parents=True, exist_ok=True)
-            atomic_status(args.status_file, snapshot(active))
+            with status_lock:
+                args.status_file.parent.mkdir(parents=True, exist_ok=True)
+                atomic_status(args.status_file, snapshot(active))
         except Exception as exc:
             print("[NATIVE STATUS WARN]", repr(exc), flush=True)
 

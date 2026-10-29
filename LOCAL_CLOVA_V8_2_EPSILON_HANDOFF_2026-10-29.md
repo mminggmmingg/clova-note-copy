@@ -161,7 +161,7 @@ native_audio_daemon_v8_2_beta.py
 
 ## 7. 남은 문제 / 불일치 (2026-10-29 기준)
 
-### 7.1 `NATIVE STATUS WARN FileNotFoundError` — 원인 확인됨
+### 7.1 `NATIVE STATUS WARN FileNotFoundError` — 2026-10-29 수정됨
 
 모든 세션 로그에 100~250회씩 찍힌다.
 
@@ -169,7 +169,19 @@ native_audio_daemon_v8_2_beta.py
 
 영향: 그 순간의 status 갱신 한 번이 빠질 뿐, PCM/RAW/추론에는 영향 없음 (dropped 0 확인). 하지만 로그 노이즈이고, 순서가 뒤바뀌면 오래된 snapshot이 새 snapshot을 덮을 수 있다.
 
-수정 방향: `save_status()` 전체(snapshot + write)를 별도 `status_lock`으로 직렬화. `snapshot()`이 내부에서 `lock`을 잡으므로 같은 lock을 재사용하면 안 됨 (non-reentrant).
+수정: `save_status()` 전체(snapshot + write)를 별도 `status_lock`으로 직렬화. `snapshot()`이 내부에서 `lock`을 잡으므로 같은 lock을 재사용하지 않음 (non-reentrant). lock 순서는 항상 `status_lock` → `lock`.
+
+검증: 두 스레드가 실제 `atomic_status()`를 3000번씩 호출 → lock 없이 FileNotFoundError 1527회, lock 사용 시 0회. 실제 녹음 세션에서 경고가 사라지는지는 다음 녹음 때 확인 필요.
+
+남은 edge case (기존 동작, 이번에 안 건드림): 종료 시 sender가 2초 join timeout 뒤에도 살아 있으면, 마지막 `save_status(False)` 이후 `save_status(True)`를 한 번 더 쓸 수 있음.
+
+### 7.6 UI에서 캡처 정지 경고가 사라짐 — 의도 확인 필요
+
+- epsilon 직전 UI(`backups/v8.2-epsilon-whisper-20260922-003145/web/app_v6.js`)는 `/api/recording/status`를 polling해서 `capture_stalled`면 "오디오 PCM이 N초 이상 멈췄습니다…" toast를 띄웠다.
+- 현재 UI(epsilon hotfix 초반에 제거, 9/22 01:07 백업에는 이미 없음)는 이 endpoint를 전혀 부르지 않는다. 백엔드 endpoint는 남아 있다.
+- → 캡처가 멈춰도 UI는 계속 "녹음 중"으로 보일 수 있다. alpha hotfix3의 "false Recording 대신 capture error" 원칙과 충돌.
+- `tools/test-v8.2-native-capture-core.py`가 이 부분(`/api/recording/status`, `beginNativeCaptureMonitoring`)에서 실패하는 것도 이 때문. (같은 테스트의 WAV writer 부분은 stereo로 갱신해서 통과)
+- 렌더 부하를 줄이려고 일부러 뺀 건지 확인 필요. 되살린다면 가벼운 status poll + stall toast만 복원 (beta UI lag hotfix처럼 전체 DOM 재구성은 하지 않게).
 
 ### 7.2 Professor LoRA가 production ASR과 끊겨 있음
 
@@ -198,7 +210,8 @@ native_audio_daemon_v8_2_beta.py
 ## 8. 다음 할 일 (우선순위)
 
 ```text
-1. NATIVE STATUS WARN race 수정 (7.1) — 작고 확실한 버그, 캡처 경로 영향 없음
+0. (완료) NATIVE STATUS WARN race 수정 (7.1) — 다음 녹음에서 경고 0인지 확인
+1. UI 캡처 정지 경고 복원 여부 결정 (7.6)
 2. Professor LoRA 방향 결정 (7.2) — Whisper adaptation으로 옮길지
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)
 4. 루트 버전 사본 정리 + 현재 파일 이름 정리 (7.5)
@@ -316,4 +329,4 @@ silero_vad=6.2.1 threshold=0.5 vad_gain_db=0.0 audio_frontend=webrtc pywebrtc=1 
 
 ## 15. 한 줄 핸드오프
 
-> Local Clova는 V8.2-epsilon.4다. host `pw-record` 스테레오 캡처 → `lecture_raw.wav`(authoritative) → RAW-backed cursor → pywebrtc APM derivative → Silero VAD → Adaptive Segmenter → **whisper.cpp Large-v3 단일 ASR**(final + bounded preview + word timestamps) 구조로 10월 실사용에서 안정적이다. 실행은 `./start-local-clova.sh` (VAD 0 dB; `--vad-db 11` 쓰지 말 것). 백엔드 파일 이름은 아직 `*_gamma.py`다. 남은 일은 native status 파일 race 수정, Professor LoRA를 Whisper 쪽으로 다시 연결할지 결정, ASR registry 정리, 버전 사본 정리다.
+> Local Clova는 V8.2-epsilon.4다. host `pw-record` 스테레오 캡처 → `lecture_raw.wav`(authoritative) → RAW-backed cursor → pywebrtc APM derivative → Silero VAD → Adaptive Segmenter → **whisper.cpp Large-v3 단일 ASR**(final + bounded preview + word timestamps) 구조로 10월 실사용에서 안정적이다. 실행은 `./start-local-clova.sh` (VAD 0 dB; `--vad-db 11` 쓰지 말 것). 백엔드 파일 이름은 아직 `*_gamma.py`다. native status 파일 race는 2026-10-29에 고쳤다. 남은 일은 UI 캡처 정지 경고 복원 여부 결정, Professor LoRA를 Whisper 쪽으로 다시 연결할지 결정, ASR registry 정리, 버전 사본 정리다.

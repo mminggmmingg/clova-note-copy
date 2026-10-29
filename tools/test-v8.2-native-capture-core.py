@@ -15,15 +15,16 @@ spec.loader.exec_module(mod)
 
 with tempfile.TemporaryDirectory() as td:
     p = Path(td) / "test.wav"
-    w = mod.CrashSafePcm16WavWriter(p, 16000)
+    # Hotfix 6: native capture is stereo s16 (4 bytes per frame).
+    w = mod.CrashSafePcm16WavWriter(p, 16000, 2)
     w.append((b"\x00\x00\x01\x00") * 1000)
     w.append((b"\xff\x7f\x00\x80") * 500)
     w.close()
     with wave.open(str(p), "rb") as f:
-        assert f.getnchannels() == 1
+        assert f.getnchannels() == 2
         assert f.getframerate() == 16000
         assert f.getsampwidth() == 2
-        assert f.getnframes() == 3000
+        assert f.getnframes() == 1500
 
 backend = BACKEND.read_text(encoding="utf-8")
 js = JS.read_text(encoding="utf-8")
