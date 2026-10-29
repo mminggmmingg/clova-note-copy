@@ -2534,6 +2534,48 @@ def save_wav(
         )
 
 
+def _segment_word_map(index, segment_stt_raw, segment_stt_chunks, duration_sec, *, audio_variant, rejected):
+    """Return (word_audio_map, word_alignment_meta) for a committed segment.
+
+    Rejected (looping) text gets no map: its token times would be garbage
+    for playback highlighting and LoRA phrase crops.
+    """
+    word_audio_map = []
+    word_alignment_meta = {
+        "version": "v7.9.3-immutable-word-map",
+        "source": "unavailable",
+        "coverage": 0.0,
+        "audio_variant": audio_variant,
+        "immutable": True,
+    }
+
+    if segment_stt_raw and not rejected:
+        try:
+            word_audio_map, word_alignment_meta = _build_word_audio_map(
+                segment_stt_raw,
+                segment_stt_chunks or [],
+                duration_sec,
+                audio_variant=audio_variant,
+            )
+            print(
+                "[WORD MAP]",
+                f"segment={index}",
+                f"mapped={len(word_audio_map)}",
+                f"coverage={word_alignment_meta.get('coverage', 0):.3f}",
+                f"audio={audio_variant}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                "[WORD MAP ERROR]",
+                f"segment={index}",
+                repr(exc),
+                flush=True,
+            )
+
+    return word_audio_map, word_alignment_meta
+
+
 def save_segment(
     s,
     *,
@@ -2574,38 +2616,14 @@ def save_segment(
             audio,
         )
 
-    word_audio_map = []
-    word_alignment_meta = {
-        "version": "v7.9.3-immutable-word-map",
-        "source": "unavailable",
-        "coverage": 0.0,
-        "audio_variant": asr_audio_variant,
-        "immutable": True,
-    }
-
-    if segment_stt_raw and not segment_stt_rejected:
-        try:
-            word_audio_map, word_alignment_meta = _build_word_audio_map(
-                segment_stt_raw,
-                segment_stt_chunks or [],
-                len(audio) / SR,
-                audio_variant=asr_audio_variant,
-            )
-            print(
-                "[WORD MAP]",
-                f"segment={index}",
-                f"mapped={len(word_audio_map)}",
-                f"coverage={word_alignment_meta.get('coverage', 0):.3f}",
-                f"audio={asr_audio_variant}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(
-                "[WORD MAP ERROR]",
-                f"segment={index}",
-                repr(exc),
-                flush=True,
-            )
+    word_audio_map, word_alignment_meta = _segment_word_map(
+        index,
+        segment_stt_raw,
+        segment_stt_chunks,
+        len(audio) / SR,
+        audio_variant=asr_audio_variant,
+        rejected=segment_stt_rejected,
+    )
 
     record = {
         "segment": index,
@@ -3105,7 +3123,14 @@ def _whisper_final_with_loop_retry(wav_path, index):
     bad, reason = detect_whisper_repetition_loop(text)
     if not bad:
         return text, chunks, False, "", None
+    return _retry_whisper_loop(wav_path, index, text, chunks, reason)
 
+
+def _retry_whisper_loop(wav_path, index, text, chunks, reason):
+    """Retry half of _whisper_final_with_loop_retry(), for a known loop.
+
+    Also used to backfill loops already stored in transcript.jsonl.
+    """
     print("[WHISPER LOOP DETECTED]", f"segment={index}", reason, flush=True)
     loop_retry = {
         "reason": reason,

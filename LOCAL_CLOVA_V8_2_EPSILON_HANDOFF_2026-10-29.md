@@ -253,7 +253,14 @@ native_audio_daemon_v8_2_beta.py
 - **재시도 설정:** `WHISPER_LOOP_RETRY_PARAMS = temperature 0.4, best_of 5`. 같은 설정으로 다시 돌리면 16/16 같은 루프가 재현됐고, 이 설정은 12/16을 풀었다. entropy_thold 2.8은 3/16, suppress_nst는 9/16이었고 "시청해주셔서 감사합니다" 환각도 나왔다.
 - **채택 조건:** 재시도 결과가 루프가 아니어야 하고, 원본에서 반복을 걷어낸 분량의 50% 이상이어야 한다. 재시도가 14초 세그먼트를 "노콜롬도요." 한 단어로 줄인 경우가 있었기 때문.
 - **기록:** transcript.jsonl의 `segment_stt_loop_retry`에 원본/재시도 텍스트, 이유, 채택 여부를 남긴다. 채택 안 되면 `segment_stt_rejected=True`이고 word map은 만들지 않는다.
-- **검증:** 실제 worker를 scratch 컨테이너 + 임시 whisper-server(127.0.0.1:18178)로 실행. 걸린 13개 중 11개 복원("아 어 어 …" ×26 → "어... 그렇고, 마치 이제, 이 영상은…" 같은 실제 강의 내용), 2개 원본 유지 + 표시. 정상 세그먼트 6개는 재시도 없이 저장된 결과와 동일. 재시도는 sampling이라 매번 결과가 조금씩 다르다.
+- **검증:** 실제 worker를 scratch 컨테이너 + 임시 whisper-server(127.0.0.1:18178)로 실행. 걸린 13개 중 11개 복원("아 어 어 …" ×26 → "어... 그렇고, 마치 이제, 이 영상은…" 같은 실제 강의 내용), 2개 원본 유지 + 표시. 정상 세그먼트 6개는 재시도 없이 저장된 결과와 동일. 재시도는 sampling이라 매번 결과가 조금씩 다를 수 있다.
+- **기존 세션 backfill (2026-10-29):** `tools/backfill-whisper-loops.py`(worker와 같은 `_retry_whisper_loop()` / `_segment_word_map()` 사용)로 저장된 13개를 처리 → 11개 복원, 2개 표시. 백엔드 이미지 컨테이너에서 project를 rw로 마운트하고 `WHISPER_SERVER_URL`을 임시 서버로 지정해 실행. 원본은 `backups/loop-backfill-20261029-043437/<session>/transcript.jsonl`. 바뀐 파일 10개 모두 줄 수 동일, 대상 세그먼트 줄만 변경, 다시 dry run 시 대상 0. 다시 쓸 때: `python3 tools/backfill-whisper-loops.py`(dry run) → `--apply`.
+
+### 7.9 10/06 세션 transcript 손상 → 세그먼트 텍스트 밀림 (미해결)
+
+- `data/sessions/20261006-055528-13f5ac0b/transcript.jsonl` 177번째 줄 앞에 NUL 바이트 569개(크래시/전원 차단 시 흔한 손상). 뒤의 JSON은 온전한 세그먼트 177 레코드라서 NUL만 걷어내면 복구된다. 전체 세션 중 이 한 줄뿐.
+- 그 영향으로 세그먼트 177이 화면에서 빠지고, 178~311의 텍스트가 한 칸씩 밀려 다른 세그먼트의 오디오/단어 맵과 짝지어져 보인다(134개). 원인: `load_session_from_disk()`가 `_base_texts_from_records()`로 텍스트 목록을 레코드 **순서**대로 만들고, `get_effective_segments()`는 그 위치를 세그먼트 번호로 쓴다. 깨진 줄이나 텍스트가 빈 레코드가 있으면 그 뒤가 전부 밀린다.
+- 고칠 것: (1) 해당 줄 NUL 제거(백업 후), (2) 텍스트 목록을 세그먼트 번호 기준으로 만들도록 수정해 재발 방지.
 
 남은 것 (결정/추가 작업 필요):
 
@@ -269,7 +276,8 @@ native_audio_daemon_v8_2_beta.py
 0. (완료) NATIVE STATUS WARN race 수정 (7.1), UI status poll / 캡처 정지 경고 복원 (7.6)
    → 다음 실제 녹음에서: 데몬 로그에 NATIVE STATUS WARN 0회, UI가 녹음 중 가볍게 유지되는지, 새 세그먼트·미리보기가 정상으로 뜨는지 확인
 0-1. (완료) 코드 리뷰 수정 + LAN 노출 차단 (7.7). 첫 실행 전에 앱에서 한 번 종료해야 새 바인딩이 적용됨
-0-2. (완료) Whisper final 반복 루프 검사 + 재시도 (7.8)
+0-2. (완료) Whisper final 반복 루프 검사 + 재시도 + 기존 세션 backfill (7.8)
+0-3. 10/06 세션 transcript 손상 복구 + 세그먼트 텍스트 밀림 수정 (7.9)
 1. 오래된 UI 테스트(`test-v8-beta*/gamma-ui-core.py`) 정리 — 현재 UI 기준으로 갱신하거나 제거
 2. Professor LoRA 방향 결정 (7.2) — Whisper adaptation으로 옮길지
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)
