@@ -9,6 +9,7 @@
 - UI: Flask + 브라우저 (`web/`)
 
 현재 구조, 결정 사항, 남은 문제는 [LOCAL_CLOVA_V8_2_EPSILON_HANDOFF_2026-10-29.md](LOCAL_CLOVA_V8_2_EPSILON_HANDOFF_2026-10-29.md) 참고.
+다음 버전(V8.3) 계획은 [LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md](LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md), STT 모델 조사는 [reports/](reports/)에 있다.
 
 ## 실행
 

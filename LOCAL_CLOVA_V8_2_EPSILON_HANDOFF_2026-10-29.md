@@ -286,6 +286,7 @@ native_audio_daemon_v8_2_beta.py
 3. ASR registry/profile을 epsilon 상태로 정리 (7.3)
 4. 루트 버전 사본 정리 + 현재 파일 이름 정리 (7.5)
 5. 장기 로드맵: V8.2-final Core API → V8.3 Native UI
+   → 2026-11-01 V8.3 계획(STT 엔진 재평가 + Qt 6 자체 UI 전환): [LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md](LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md)
 ```
 
 VibeVoice: `external/VibeVoice` clone과 `models/vibevoice/`가 있다. 실제 adapter/A-B 진행 여부는 미확인. 원칙은 그대로 — 새 engine slot으로 A/B, 현재 production ASR을 즉시 제거하지 않음, gfx1151 지원 리스크 때문에 캡처 안정성보다 우선하지 않음.
