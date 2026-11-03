@@ -15,7 +15,7 @@ from pathlib import Path
 QML_MAIN = Path(__file__).with_name("qml") / "Main.qml"
 FONT_DIR = Path(__file__).with_name("fonts")
 # Notebook-theme handwriting (the web loads it from Google Fonts).
-HAND_FAMILIES = ("Nanum Pen Script", "나눔손글씨 펜", "NanumPen")
+HAND_FAMILIES = ("Nanum Pen Script", "Nanum Pen", "나눔손글씨 펜", "NanumPen")
 
 
 def main(argv=None) -> int:
@@ -24,7 +24,7 @@ def main(argv=None) -> int:
     ap.add_argument("--open-session", default="")
     ap.add_argument("--screenshot", type=Path)
     ap.add_argument("--size", default="1280x820", help="window size WxH")
-    ap.add_argument("--theme", choices=["dark", "light"], help="override the desktop light/dark setting")
+    ap.add_argument("--theme", choices=["notebook", "dark", "light"], help="override the remembered theme")
     args, qt_args = ap.parse_known_args(argv)
 
     if args.screenshot:
