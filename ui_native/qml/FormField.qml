@@ -3,8 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "."
 
-// Labeled text field in the web UI's .form-field style (warm paper in the
-// notebook theme). With `options` set it becomes a drop-down instead:
+// Labeled text field. With `options` set it becomes a drop-down instead:
 // options = [{ value, label }], and `value` holds the chosen value.
 ColumnLayout {
     id: field
@@ -25,47 +24,48 @@ ColumnLayout {
 
     Label {
         text: field.label
-        color: Theme.pick("#7d8794", "#536071", "#786d61")
-        font.pointSize: Theme.pt(9.5)
-        font.weight: 680
+        color: Theme.muted
+        font.pixelSize: 13
+        font.weight: 600
     }
 
     component FieldBox: Rectangle {
         property bool focused: false
-        radius: 10
-        border.color: focused ? Theme.pick(Theme.ink(124, 140, 255, .5), Theme.ink(103, 117, 232, .5), Theme.ink(185, 138, 73, .42))
-                              : Theme.pick(Theme.ink(255, 255, 255, .09), Theme.ink(24, 36, 54, .14), Theme.ink(124, 96, 63, .18))
-        gradient: Gradient {
-            GradientStop { position: 0; color: Theme.pick("#0b0e12", "#ffffff", "#fffdf8") }
-            GradientStop { position: 1; color: Theme.pick("#0b0e12", "#ffffff", "#fbf5eb") }
-        }
+        radius: Theme.radius
+        color: Theme.fieldBg
+        border.width: focused || !Theme.classic ? 1 : 0
+        border.color: focused ? Theme.focus : Theme.fieldLine
     }
 
     TextField {
         id: input
         visible: !field.options
         Layout.fillWidth: true
-        implicitHeight: 41
+        implicitHeight: 40
         leftPadding: 12
         rightPadding: 12
-        color: Theme.pick("#e8ecf2", "#172130", "#4f453b")
-        placeholderTextColor: Theme.pick("#48515c", "#9aa4b1", "#aa9d8e")
-        font.pointSize: Theme.pt(12)
+        color: Theme.text
+        placeholderTextColor: Theme.muted
+        selectionColor: Theme.wordPlaying
+        selectedTextColor: Theme.text
+        font.pixelSize: 15
         selectByMouse: true
         background: FieldBox { focused: input.activeFocus }
         onAccepted: field.accepted()
+        Accessible.name: field.label
     }
 
     ComboBox {
         id: combo
         visible: !!field.options
         Layout.fillWidth: true
-        implicitHeight: 41
+        implicitHeight: 40
         model: field.options || []
         textRole: "label"
         valueRole: "value"
-        font.pointSize: Theme.pt(12)
+        font.pixelSize: 15
         leftPadding: 12
+        Accessible.name: field.label
         onActivated: field.value = currentValue
         Component.onCompleted: currentIndex = Math.max(0, indexOfValue(field.value))
         Connections {
@@ -76,19 +76,20 @@ ColumnLayout {
         background: FieldBox { focused: combo.activeFocus || combo.popup.visible }
         contentItem: Label {
             leftPadding: 0
+            rightPadding: 28
             verticalAlignment: Text.AlignVCenter
             text: combo.displayText
-            color: Theme.pick("#e8ecf2", "#172130", "#4f453b")
+            color: Theme.text
             font: combo.font
             elide: Text.ElideRight
         }
         indicator: Icon {
             x: combo.width - width - 12
             y: (combo.height - height) / 2
-            width: 12
-            height: 12
+            width: 14
+            height: 14
             name: "chevron"
-            color: Theme.muted2
+            color: Theme.muted
         }
         delegate: ItemDelegate {
             id: option
@@ -99,12 +100,12 @@ ColumnLayout {
             highlighted: combo.highlightedIndex === index
             contentItem: Label {
                 text: option.modelData.label
-                color: Theme.pick("#e8ecf2", "#172130", "#4f453b")
-                font.pointSize: Theme.pt(12)
+                color: Theme.text
+                font.pixelSize: 15
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
-            background: Rectangle { color: option.highlighted ? Theme.hover : "transparent" }
+            background: Rectangle { radius: 6; color: option.highlighted ? Theme.hover : "transparent" }
         }
         popup: Popup {
             y: combo.height + 4
@@ -119,9 +120,9 @@ ColumnLayout {
                 ScrollIndicator.vertical: ScrollIndicator {}
             }
             background: Rectangle {
-                radius: 10
-                color: Theme.pick("#14181e", "#ffffff", "#fffaf0")
-                border.color: Theme.lineStrong
+                radius: Theme.radius
+                color: Theme.dialogBg
+                border.color: Theme.dialogLine
             }
         }
     }

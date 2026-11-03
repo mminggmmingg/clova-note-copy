@@ -6,7 +6,7 @@
 - 오디오 frontend: pywebrtc APM (derivative only)
 - VAD: Silero 6.2.1 + Adaptive Segmenter
 - ASR: Whisper Large-v3 (whisper.cpp HIP 서버) 단일 모델 — final + preview + word timestamps
-- UI: Flask + 브라우저 (`web/`). 네이티브 Qt UI(`ui_native/`, PySide6 6.12)로 전환 중 — 지금은 강의 열람, 단어 재생, 녹음 시작·정지·재개까지
+- UI: Flask + 브라우저 (`web/`). 네이티브 Qt UI(`ui_native/`, PySide6 6.12)로 전환 중 — 지금은 강의 열람, 단어 재생, 녹음 시작·정지·재개까지. 화면 테마 3개(종이 노트·스튜디오·클래식 라이트)는 설정(Ctrl+,)에서 고른다
 
 현재 구조, 결정 사항, 남은 문제는 [LOCAL_CLOVA_V8_2_EPSILON_HANDOFF_2026-10-29.md](LOCAL_CLOVA_V8_2_EPSILON_HANDOFF_2026-10-29.md) 참고.
 다음 버전(V8.3) 계획은 [LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md](LOCAL_CLOVA_V8_3_PLAN_2026-11-01.md), STT 모델 조사는 [reports/](reports/)에 있다.

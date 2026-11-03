@@ -15,7 +15,7 @@ from pathlib import Path
 
 QML_MAIN = Path(__file__).with_name("qml") / "Main.qml"
 FONT_DIR = Path(__file__).with_name("fonts")
-# Notebook-theme handwriting (the web loads it from Google Fonts).
+# Handwriting body face (Settings > 본문 글꼴 > 손글씨); the web loads it from Google Fonts.
 HAND_FAMILIES = ("Nanum Pen Script", "Nanum Pen", "나눔손글씨 펜", "NanumPen")
 
 
@@ -25,7 +25,8 @@ def main(argv=None) -> int:
     ap.add_argument("--open-session", default="")
     ap.add_argument("--screenshot", type=Path)
     ap.add_argument("--size", default="1280x820", help="window size WxH")
-    ap.add_argument("--theme", choices=["notebook", "dark", "light"], help="override the remembered theme")
+    ap.add_argument("--theme", choices=["paper", "studio", "classic"],
+                    help="override the theme chosen in Settings for this run")
     args, qt_args = ap.parse_known_args(argv)
 
     if args.screenshot:
@@ -42,7 +43,7 @@ def main(argv=None) -> int:
 
     app = QGuiApplication([sys.argv[0], *qt_args])
     app.setApplicationName("Local Clova")
-    app.setOrganizationName("LocalClova")  # QtCore Settings: remembers the theme
+    app.setOrganizationName("LocalClova")  # QtCore Settings: remembers theme and body font
     app.setDesktopFileName("local-clova")
     # One CJK font for Hangul and Latin alike: mixed-script words in a
     # transcript line then share metrics instead of jumping baselines.
