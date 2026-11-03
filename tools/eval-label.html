@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STT 평가 라벨링</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2430; --muted: #687384; --line: #dde2ea;
+    --accent: #3f5bd8; --accent-soft: #e8ecfd; --warn: #b4581b; --warn-soft: #fbeee4;
+    --ok: #227a4f; --ok-soft: #e3f3ea; --blind: #7a3fc4; --blind-soft: #f0e8fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1a1f27; --text: #e5e9f0; --muted: #8c96a6; --line: #2a313c;
+      --accent: #8ea2ff; --accent-soft: #232b48; --warn: #f0a46d; --warn-soft: #3a2a1f;
+      --ok: #73d3a1; --ok-soft: #1d3329; --blind: #c49cff; --blind-soft: #2e2440;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, "Noto Sans KR", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 18px; margin: 0; }
+  .progress { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--muted); }
+  .progress b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  .filters button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+  .filters button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .badge { border-radius: 6px; padding: 2px 8px; font-weight: 600; font-size: 12px; }
+  .badge.blind { background: var(--blind-soft); color: var(--blind); }
+  .badge.correct { background: var(--accent-soft); color: var(--accent); }
+  .badge.nonspeech { background: var(--warn-soft); color: var(--warn); }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .hint { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+  .player { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+  .player audio { flex: 1 1 260px; min-width: 0; }
+  button.tool, select { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  textarea { width: 100%; min-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, "Noto Sans KR", sans-serif; }
+  textarea:disabled { opacity: .45; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 12px; font-size: 14px; }
+  .row input[type=text] { flex: 1 1 200px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--bg); color: var(--text); font: inherit; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .actions button { border-radius: 10px; padding: 8px 14px; font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .status-line { min-height: 22px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .status-line.error { color: var(--warn); }
+  details { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  details li { margin: 2px 0; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>STT 평가 라벨링 <span id="setName" class="meta"></span></h1>
+    <div class="progress" id="progress"></div>
+  </header>
+
+  <div class="filters" id="filters"></div>
+
+  <section class="card" id="card">
+    <div class="meta" id="meta"></div>
+    <p class="hint" id="modeHint"></p>
+
+    <div class="player">
+      <audio id="audio" controls preload="auto"></audio>
+      <button class="tool" id="back2" title="Alt+←">−2초</button>
+      <button class="tool" id="restart" title="Alt+R">처음부터</button>
+      <select id="rate" title="재생 속도">
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option>
+      </select>
+      <label><input type="checkbox" id="autoplay" checked> 자동 재생</label>
+    </div>
+
+    <textarea id="text" placeholder="들리는 대로 적으세요"></textarea>
+
+    <div class="row" id="statusRow">
+      <label><input type="radio" name="status" value="ok" checked> 전사함</label>
+      <label><input type="radio" name="status" value="nonspeech"> 사람 말 없음</label>
+      <label><input type="radio" name="status" value="unintelligible"> 알아들을 수 없음(제외)</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="noisy"> 잡음·겹침 심함</label>
+      <input type="text" id="note" placeholder="메모 (선택)">
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="save" title="Ctrl+Enter">저장하고 다음 <kbd>Ctrl</kbd>+<kbd>Enter</kbd></button>
+      <button id="prev">이전</button>
+      <button id="next">다음</button>
+      <button id="nextTodo">다음 미완료</button>
+    </div>
+    <div class="status-line" id="statusLine"></div>
+  </section>
+
+  <details>
+    <summary>전사 규칙</summary>
+    <ul>
+      <li>들리는 대로 적습니다. 문장을 다듬거나 뜻을 고치지 않습니다.</li>
+      <li>영어로 말한 단어는 영어 철자로(Kalman filter, eigenvalue), 한국어식으로 읽었으면 한글로 적습니다.</li>
+      <li>숫자는 아라비아 숫자로 적어도 됩니다. 수식은 읽은 대로 적습니다(예: "x 제곱 플러스 1").</li>
+      <li>"어", "음", "그" 같은 간투사와 말 더듬기도 들리면 적습니다.</li>
+      <li>잘 안 들리는 부분은 <code>[?]</code>로 표시합니다. 전체를 못 알아들으면 "알아들을 수 없음"을 고릅니다.</li>
+      <li><b>블라인드</b>: Whisper 결과 없이 처음부터 적습니다. 이 구간을 앱에서 미리 보지 마세요.</li>
+      <li><b>교정</b>: Whisper 결과에서 틀린 곳만 고칩니다. 띄어쓰기와 문장부호는 신경 쓰지 않아도 됩니다(채점 때 정규화).</li>
+      <li><b>비음성</b>: 사람 말이 전혀 없으면 "사람 말 없음". 말이 있으면 전사합니다.</li>
+      <li>단축키: <kbd>Ctrl</kbd>+<kbd>Space</kbd> 재생/정지, <kbd>Alt</kbd>+<kbd>←</kbd> 2초 뒤로, <kbd>Alt</kbd>+<kbd>R</kbd> 처음부터, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 저장하고 다음.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+(() => {
+  const MODE_ORDER = { blind: 0, correct: 1, nonspeech: 2 };
+  const MODE_LABEL = { blind: "블라인드", correct: "교정", nonspeech: "비음성" };
+  const MODE_HINT = {
+    blind: "Whisper 결과 없이 들리는 대로 처음부터 적습니다.",
+    correct: "Whisper 결과에서 틀린 곳만 고칩니다.",
+    nonspeech: "VAD가 말이 없다고 본 구간입니다. 사람 말이 있는지 확인합니다.",
+  };
+  const $ = (id) => document.getElementById(id);
+  const state = { items: [], view: [], filter: "todo", index: 0, dirty: false, blobUrl: null };
+
+  function isDone(it) { return Boolean(it.label); }
+
+  function applyFilter(keepId) {
+    const f = state.filter;
+    state.view = state.items.filter((it) =>
+      f === "all" ? true : f === "todo" ? !isDone(it) : it.mode === f);
+    const found = keepId ? state.view.findIndex((it) => it.id === keepId) : -1;
+    state.index = found >= 0 ? found : 0;
+  }
+
+  function renderProgress() {
+    const parts = [];
+    for (const mode of ["blind", "correct", "nonspeech"]) {
+      const all = state.items.filter((it) => it.mode === mode);
+      parts.push(`${MODE_LABEL[mode]} <b>${all.filter(isDone).length}/${all.length}</b>`);
+    }
+    parts.push(`전체 <b>${state.items.filter(isDone).length}/${state.items.length}</b>`);
+    $("progress").innerHTML = parts.join(" · ");
+    const filters = [["todo", "미완료"], ["all", "전체"], ["blind", "블라인드"], ["correct", "교정"], ["nonspeech", "비음성"]];
+    const box = $("filters");
+    box.replaceChildren(...filters.map(([key, label]) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.className = state.filter === key ? "on" : "";
+      b.onclick = () => { if (!confirmLeave()) return; state.filter = key; applyFilter(current()?.id); render(); };
+      return b;
+    }));
+  }
+
+  function current() { return state.view[state.index]; }
+
+  async function loadAudio(it) {
+    const audio = $("audio");
+    audio.pause();
+    if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
+    const blob = await (await fetch(`/clip/${encodeURIComponent(it.id)}`)).blob();
+    state.blobUrl = URL.createObjectURL(blob);
+    audio.src = state.blobUrl;
+    audio.playbackRate = Number($("rate").value);
+    if ($("autoplay").checked) audio.play().catch(() => {});
+  }
+
+  function render() {
+    renderProgress();
+    const it = current();
+    if (!it) {
+      $("meta").textContent = state.filter === "todo" ? "남은 항목이 없습니다." : "항목이 없습니다.";
+      $("modeHint").textContent = "";
+      $("text").value = "";
+      return;
+    }
+    const meta = $("meta");
+    const badge = document.createElement("span");
+    badge.className = `badge ${it.mode}`;
+    badge.textContent = MODE_LABEL[it.mode];
+    const info = document.createElement("span");
+    const seg = it.segment ? ` · SEG ${it.segment}` : "";
+    info.textContent = `${state.index + 1}/${state.view.length} · ${it.session_id}${seg} · ${Number(it.duration_sec || 0).toFixed(1)}초`;
+    const nodes = [badge, info];
+    if (isDone(it)) {
+      const done = document.createElement("span");
+      done.className = "badge done";
+      done.textContent = "저장됨";
+      nodes.push(done);
+    }
+    meta.replaceChildren(...nodes);
+    $("modeHint").textContent = MODE_HINT[it.mode];
+
+    const label = it.label;
+    $("text").value = label ? label.text : (it.mode === "correct" ? it.whisper_text : "");
+    const status = label ? label.status : "ok";
+    for (const r of document.querySelectorAll("input[name=status]")) r.checked = r.value === status;
+    $("noisy").checked = Boolean(label && label.noisy);
+    $("note").value = label ? label.note : "";
+    syncTextEnabled();
+    state.dirty = false;
+    $("statusLine").textContent = "";
+    $("statusLine").className = "status-line";
+    loadAudio(it).catch((e) => setStatus(`오디오를 불러오지 못했습니다: ${e.message}`, true));
+  }
+
+  function selectedStatus() { return document.querySelector("input[name=status]:checked").value; }
+  function syncTextEnabled() { $("text").disabled = selectedStatus() !== "ok"; }
+  function setStatus(msg, error = false) { $("statusLine").textContent = msg; $("statusLine").className = `status-line${error ? " error" : ""}`; }
+  function confirmLeave() { return !state.dirty || confirm("저장하지 않은 변경이 있습니다. 이동할까요?"); }
+
+  async function save() {
+    const it = current();
+    if (!it) return;
+    const body = { id: it.id, status: selectedStatus(), text: $("text").value, noisy: $("noisy").checked, note: $("note").value };
+    const res = await fetch("/api/label", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) { setStatus(data.error || "저장 실패", true); return; }
+    it.label = data.label;
+    state.dirty = false;
+    if (state.filter === "todo") {
+      // The saved item leaves the "todo" view; continue from its position.
+      const pos = state.items.indexOf(it);
+      applyFilter();
+      const nextIdx = state.view.findIndex((x) => state.items.indexOf(x) > pos);
+      state.index = nextIdx >= 0 ? nextIdx : 0;
+    } else {
+      state.index = Math.min(state.index + 1, state.view.length - 1);
+    }
+    render();
+    setStatus("저장했습니다.");
+  }
+
+  function move(delta) {
+    if (!confirmLeave()) return;
+    state.index = Math.max(0, Math.min(state.view.length - 1, state.index + delta));
+    render();
+  }
+
+  function nextTodo() {
+    if (!confirmLeave()) return;
+    const start = state.index + 1;
+    const order = [...state.view.slice(start), ...state.view.slice(0, start)];
+    const target = order.find((it) => !isDone(it));
+    if (!target) { setStatus("남은 미완료 항목이 없습니다."); return; }
+    state.index = state.view.indexOf(target);
+    render();
+  }
+
+  $("save").onclick = save;
+  $("prev").onclick = () => move(-1);
+  $("next").onclick = () => move(1);
+  $("nextTodo").onclick = nextTodo;
+  $("back2").onclick = () => { const a = $("audio"); a.currentTime = Math.max(0, a.currentTime - 2); a.play().catch(() => {}); };
+  $("restart").onclick = () => { const a = $("audio"); a.currentTime = 0; a.play().catch(() => {}); };
+  $("rate").onchange = () => { $("audio").playbackRate = Number($("rate").value); };
+  for (const r of document.querySelectorAll("input[name=status]")) r.onchange = () => { syncTextEnabled(); state.dirty = true; };
+  for (const id of ["text", "note"]) $(id).oninput = () => { state.dirty = true; };
+  $("noisy").onchange = () => { state.dirty = true; };
+
+  document.addEventListener("keydown", (e) => {
+    const a = $("audio");
+    if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.ctrlKey && e.code === "Space") { e.preventDefault(); a.paused ? a.play().catch(() => {}) : a.pause(); }
+    else if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); $("back2").click(); }
+    else if (e.altKey && (e.key === "r" || e.key === "R")) { e.preventDefault(); $("restart").click(); }
+  });
+  window.addEventListener("beforeunload", (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  fetch("/api/items").then((r) => r.json()).then((data) => {
+    $("setName").textContent = data.set;
+    state.items = data.items.sort((a, b) =>
+      (MODE_ORDER[a.mode] - MODE_ORDER[b.mode]) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    applyFilter();
+    render();
+  }).catch((e) => setStatus(`항목을 불러오지 못했습니다: ${e.message}`, true));
+})();
+</script>
+</body>
+</html>
