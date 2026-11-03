@@ -10,6 +10,7 @@
 import argparse
 import os
 import sys
+import uuid
 from pathlib import Path
 
 QML_MAIN = Path(__file__).with_name("qml") / "Main.qml"
@@ -32,7 +33,7 @@ def main(argv=None) -> int:
         os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
     # Import after the platform environment is set.
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QSettings, QTimer
     from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuickControls2 import QQuickStyle
@@ -52,7 +53,14 @@ def main(argv=None) -> int:
     hand_family = next((f for f in HAND_FAMILIES if f in families), "")
     QQuickStyle.setStyle("Basic")
 
-    api = ApiClient(args.backend)
+    # One recorder id per installation (the web keeps one per tab), so after
+    # a restart this app may reconnect to the session it was recording.
+    settings = QSettings()
+    client_id = str(settings.value("recorder/clientId", "") or "")
+    if not client_id:
+        client_id = f"native-{uuid.uuid4()}"
+        settings.setValue("recorder/clientId", client_id)
+    api = ApiClient(args.backend, client_id)
     width, height = (int(x) for x in args.size.lower().split("x"))
     engine = QQmlApplicationEngine()
     engine.setInitialProperties({

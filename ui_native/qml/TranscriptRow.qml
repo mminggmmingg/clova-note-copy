@@ -28,10 +28,13 @@ Item {
 
     implicitHeight: Math.max(74, body.implicitHeight + (Theme.notebook ? 18 : 26))
 
-    readonly property bool warn: !!seg.segment_stt_rejected || seg.final_source === "whisper_error"
+    // Still in the sentence worker while recording (web: .transcript-row.processing).
+    readonly property bool pending: !!seg.pending
+    readonly property bool warn: !pending && (!!seg.segment_stt_rejected || seg.final_source === "whisper_error")
     readonly property var words: {
-        if (seg.word_timeline && seg.word_timeline.length) return seg.word_timeline
-        return String(seg.text || "").split(/\s+/).filter(w => w).map(w => ({ text: w, start_sec: 0, end_sec: -1 }))
+        if (!pending && seg.word_timeline && seg.word_timeline.length) return seg.word_timeline
+        const text = pending ? (seg.segment_stt_raw || seg.whisper_raw || "Whisper 처리 중…") : (seg.text || "")
+        return String(text).split(/\s+/).filter(w => w).map(w => ({ text: w, start_sec: 0, end_sec: -1 }))
     }
 
     function clock(sec) {
@@ -184,7 +187,7 @@ Item {
             radius: 7
             color: playHover.hovered ? Theme.accentSoft : "transparent"
             opacity: row.playing || rowHover.hovered ? 1 : 0.45
-            visible: !!row.seg.audio_available
+            visible: !!row.seg.audio_available && !row.pending
             Icon {
                 anchors.centerIn: parent
                 width: 12
@@ -224,7 +227,8 @@ Item {
                 Label {
                     id: chip
                     anchors.centerIn: parent
-                    text: row.seg.final_source === "whisper_error" ? "WHISPER · ERROR"
+                    text: row.pending ? "WHISPER · 처리 중"
+                        : row.seg.final_source === "whisper_error" ? "WHISPER · ERROR"
                         : row.seg.segment_stt_rejected ? "WHISPER · 반복 의심" : "WHISPER LARGE-V3"
                     color: row.warn ? Theme.warnText : Theme.chipText
                     font.pointSize: Theme.pt(7.8)
@@ -263,14 +267,14 @@ Item {
                         anchors.centerIn: parent
                         anchors.verticalCenterOffset: Theme.notebook ? 1 : 0
                         text: word.modelData.text
-                        color: Theme.transcript
+                        color: row.pending ? Theme.muted : Theme.transcript
                         font.family: Theme.notebook ? Theme.handFamily : Theme.family
                         font.pointSize: Theme.pt(row.textPx)
                         font.weight: word.active ? (Theme.notebook ? 700 : 800) : (Theme.notebook ? 400 : 620)
                         font.letterSpacing: Theme.notebook ? 0.13 : -0.07
                     }
-                    HoverHandler { id: wordHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: row.wordTapped(Number(word.modelData.start_sec) || 0) }
+                    HoverHandler { id: wordHover; enabled: !row.pending; cursorShape: Qt.PointingHandCursor }
+                    TapHandler { enabled: !row.pending; onTapped: row.wordTapped(Number(word.modelData.start_sec) || 0) }
                 }
             }
         }

@@ -5,7 +5,8 @@ import "."
 
 // Button in the web UI's style: a paper card with an under-lip and soft drop
 // in the notebook theme, a quiet bordered button in dark/light.
-// variant: "default" | "green" | "orange"
+// variant: "default" | "green" | "orange" | "red" | "primary" (modal submit)
+// dotColor: a small round dot before the text (the web's .record-dot).
 Item {
     id: btn
 
@@ -20,6 +21,7 @@ Item {
     property real fontWeight: 650
     property bool dimmed: false
     property bool fillWidth: false
+    property color dotColor: "transparent"
 
     signal clicked()
 
@@ -32,10 +34,16 @@ Item {
         if (Theme.notebook) {
             if (variant === "green") return { top: "#edf7e9", bottom: "#dfeeda", border: Theme.ink(104, 148, 103, .22), fg: "#4f7f61" }
             if (variant === "orange") return { top: "#fff5e9", bottom: "#fae4d2", border: Theme.ink(190, 123, 81, .20), fg: "#a66749" }
+            if (variant === "red") return { top: "#fff3f1", bottom: "#f8e0dd", border: Theme.ink(176, 92, 92, .22), fg: "#a35f5f" }
+            if (variant === "primary") return { top: "#fff6da", bottom: "#f3e4b9", border: Theme.ink(164, 126, 68, .22), fg: "#6f5534" }
             return { top: Theme.paperTop, bottom: Theme.paperBottom, border: Theme.paperBorder, fg: Theme.paperText }
         }
         if (variant === "green") return { top: Theme.ink(94, 214, 160, .12), bottom: Theme.ink(94, 214, 160, .12), border: Theme.ink(94, 214, 160, .22), fg: Theme.dark ? "#8fe3bb" : "#2f8f63" }
         if (variant === "orange") return { top: Theme.ink(243, 185, 95, .12), bottom: Theme.ink(243, 185, 95, .12), border: Theme.ink(243, 185, 95, .28), fg: Theme.dark ? "#f3c98a" : "#9a5b12" }
+        if (variant === "red") return { top: Theme.ink(255, 109, 117, .11), bottom: Theme.ink(255, 109, 117, .11), border: Theme.ink(255, 109, 117, .26), fg: Theme.dark ? "#ff8d93" : "#c2414b" }
+        if (variant === "primary") return Theme.dark
+            ? { top: Theme.ink(124, 140, 255, .22), bottom: Theme.ink(124, 140, 255, .13), border: Theme.ink(124, 140, 255, .28), fg: "#e4e7ff" }
+            : { top: Theme.ink(103, 117, 232, .14), bottom: Theme.ink(103, 117, 232, .08), border: Theme.ink(103, 117, 232, .26), fg: "#3d48b8" }
         const flat = Theme.dark ? Theme.ink(255, 255, 255, .026) : Theme.ink(255, 255, 255, .9)
         return { top: flat, bottom: flat, border: Theme.line, fg: Theme.dark ? "#d7dce5" : "#3a4655" }
     }
@@ -81,6 +89,13 @@ Item {
         id: content
         anchors.centerIn: parent
         spacing: 7
+        Rectangle {
+            visible: btn.dotColor.a > 0
+            width: 8
+            height: 8
+            radius: 4
+            color: btn.dotColor
+        }
         Icon {
             visible: btn.icon !== ""
             name: btn.icon
