@@ -32,3 +32,6 @@ logs/
 *.pid
 backups/
 *.zip
+
+# Native UI virtualenv
+.venv-ui/

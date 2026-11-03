@@ -56,7 +56,7 @@ epsilon에서 Qwen/BatiSay → Whisper로 바꾼 것 자체가 이 철학대로 
 ```text
 프로젝트 홈 : /home/parks-zbook/clova-note-copy   (~/parksThink, /mnt/parksThink 아님)
 GitHub      : github.com/mminggmmingg/clova-note-copy (private)
-OS          : Ubuntu 24.04, kernel 7.0 (HWE)
+OS          : Ubuntu 26.04.1 LTS, kernel 7.0 (7.0.0-1015-oem, 2026-11-03 확인)
 Laptop      : HP ZBook Ultra G1a
 GPU/APU     : AMD Ryzen AI Max+ PRO 395 / gfx1151 (ROCm, whisper.cpp는 HIP)
 Audio       : PipeWire / pw-record

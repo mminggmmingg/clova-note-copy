@@ -10042,82 +10042,8 @@ def ui_js():
 # MAIN
 # =========================================================
 
-def main():
-
-    global qwen_asr
-    global ASR_REGISTRY
-    global batisay_pipe
-    global batisay_model
-    global batisay_processor
-
-    print("[0/2] V8.2-epsilon · Whisper Single-ASR", flush=True)
-    ASR_REGISTRY = None
-    qwen_asr = None
-    batisay_pipe = None
-    batisay_model = None
-    batisay_processor = None
-
-    print(
-        "[VAD CONFIG]",
-        f"silero_vad={SILERO_VAD_VERSION}",
-        f"threshold={VAD_THRESHOLD}",
-        f"vad_gain_db={VAD_INPUT_GAIN_DB}",
-        f"audio_frontend={AUDIO_FRONTEND}",
-        f"pywebrtc={int(PYWEBRTC_AUDIO_AVAILABLE)}",
-        f"reset_policy={VAD_RESET_POLICY}",
-        f"telemetry={int(VAD_TELEMETRY_ENABLED)}",
-        flush=True,
-    )
-
-    print("[1/2] Checking persistent whisper.cpp server...", WHISPER_SERVER_URL, flush=True)
-    try:
-        r = requests.get(WHISPER_SERVER_URL + "/", timeout=3)
-        r.raise_for_status()
-    except Exception as exc:
-        raise RuntimeError(f"whisper.cpp server unavailable at {WHISPER_SERVER_URL}: {exc!r}")
-
-    print(
-        "[3/4] Audio enhancement backend...",
-        flush=True,
-    )
-    if DENOISE_ENABLED and DENOISE_BIN.is_file() and os.access(DENOISE_BIN, os.X_OK):
-        print(
-            "[AUDIO FRONTEND] DeepFilter derivative available but Whisper path is RAW-only",
-            flush=True,
-        )
-    elif DENOISE_ENABLED:
-        print(
-            "[DENOISE WARN] deep-filter binary unavailable; adaptive Wiener fallback will be used",
-            DENOISE_BIN,
-            flush=True,
-        )
-    else:
-        print("[DENOISE] disabled", flush=True)
-
-    print(
-        "[2/2] Whisper single-ASR backend ready",
-        flush=True,
-    )
-
-    print(
-        "[READY] Whisper Large-v3 FP16 · whisper.cpp HIP · single-ASR",
-        flush=True,
-    )
-    print(
-        "[TIMELINE READY]", TIMELINE_SCHEMA_VERSION,
-        "basis=native_pipewire_samples",
-        flush=True,
-    )
-    print(
-        "[QWEN3.8] removed since V7.9.3 · V8.2-gamma · no llama-server dependency",
-        flush=True,
-    )
-    print(
-        "[LoRA]", "PEFT ready" if PEFT_AVAILABLE else "PEFT unavailable",
-        flush=True,
-    )
-
-    hydrate_sessions_from_disk()
+def register_routes(app):
+    """Attach every HTTP route. Shared by main() and tools/dev-ui-backend.py."""
 
     app.add_url_rule("/", "index", index, methods=["GET"])
     app.add_url_rule("/api/start", "api_start", api_start, methods=["POST"])
@@ -10303,6 +10229,87 @@ def main():
         api_app_shutdown,
         methods=["POST"],
     )
+
+
+def main():
+
+    global qwen_asr
+    global ASR_REGISTRY
+    global batisay_pipe
+    global batisay_model
+    global batisay_processor
+
+    print("[0/2] V8.2-epsilon · Whisper Single-ASR", flush=True)
+    ASR_REGISTRY = None
+    qwen_asr = None
+    batisay_pipe = None
+    batisay_model = None
+    batisay_processor = None
+
+    print(
+        "[VAD CONFIG]",
+        f"silero_vad={SILERO_VAD_VERSION}",
+        f"threshold={VAD_THRESHOLD}",
+        f"vad_gain_db={VAD_INPUT_GAIN_DB}",
+        f"audio_frontend={AUDIO_FRONTEND}",
+        f"pywebrtc={int(PYWEBRTC_AUDIO_AVAILABLE)}",
+        f"reset_policy={VAD_RESET_POLICY}",
+        f"telemetry={int(VAD_TELEMETRY_ENABLED)}",
+        flush=True,
+    )
+
+    print("[1/2] Checking persistent whisper.cpp server...", WHISPER_SERVER_URL, flush=True)
+    try:
+        r = requests.get(WHISPER_SERVER_URL + "/", timeout=3)
+        r.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(f"whisper.cpp server unavailable at {WHISPER_SERVER_URL}: {exc!r}")
+
+    print(
+        "[3/4] Audio enhancement backend...",
+        flush=True,
+    )
+    if DENOISE_ENABLED and DENOISE_BIN.is_file() and os.access(DENOISE_BIN, os.X_OK):
+        print(
+            "[AUDIO FRONTEND] DeepFilter derivative available but Whisper path is RAW-only",
+            flush=True,
+        )
+    elif DENOISE_ENABLED:
+        print(
+            "[DENOISE WARN] deep-filter binary unavailable; adaptive Wiener fallback will be used",
+            DENOISE_BIN,
+            flush=True,
+        )
+    else:
+        print("[DENOISE] disabled", flush=True)
+
+    print(
+        "[2/2] Whisper single-ASR backend ready",
+        flush=True,
+    )
+
+    print(
+        "[READY] Whisper Large-v3 FP16 · whisper.cpp HIP · single-ASR",
+        flush=True,
+    )
+    print(
+        "[TIMELINE READY]", TIMELINE_SCHEMA_VERSION,
+        "basis=native_pipewire_samples",
+        flush=True,
+    )
+    print(
+        "[QWEN3.8] removed since V7.9.3 · V8.2-gamma · no llama-server dependency",
+        flush=True,
+    )
+    print(
+        "[LoRA]", "PEFT ready" if PEFT_AVAILABLE else "PEFT unavailable",
+        flush=True,
+    )
+
+    hydrate_sessions_from_disk()
+
+    register_routes(app)
+
 
     app.run(
         host="0.0.0.0",

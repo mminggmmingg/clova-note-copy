@@ -148,7 +148,7 @@ Preview.transcribe_window(pcm, sr) -> text                      # 저장 안 함
 | Slint / egui / iced | 압력 필드 없음 / 확인 안 됨 | 직접 구현 | 비추천 |
 
 - 언어: **PySide6로 시작**(백엔드와 같은 Python, 가장 빠름). Rust 코어는 별도 데몬으로 나중에. CXX-Qt 0.10(2026-08), Qt 공식 Rust 바인딩은 2026-10-27 기술 프리뷰라 UI 프로세스를 Rust로 쓰기엔 이르다.
-- Qt 버전: Ubuntu 24.04 패키지(6.4 추정)는 너무 오래됨 → **pip PySide6 휠**(최신 LTS 계열)로 고정.
+- Qt 버전: 시스템 패키지(Ubuntu 26.04, Qt 6.10) 대신 **pip PySide6 휠**(6.12 LTS)로 고정해 OS 업데이트와 분리.
 - 미검증(스파이크에서 확인): ZBook 펜 실제 압력, Qt Multimedia 갭리스 재생 가능 여부, 분수 배율.
 
 ### 2.3 단계 (Flask API를 계약으로 고정한 점진 전환)
@@ -162,6 +162,46 @@ Preview.transcribe_window(pcm, sr) -> text                      # 저장 안 함
 | **U4 재생/타임라인** | 네이티브 갭리스 재생(Qt Multimedia 또는 PipeWire 직접), 재생 위치 ↔ 전사/PDF/필기 동기화 | WebAudio 재생과 같은 동작 |
 | **U5 실시간 갱신** | polling → Unix 소켓(`$XDG_RUNTIME_DIR`) 이벤트 스트림(JSON lines) 또는 SSE. 세그먼트 확정/프리뷰/캡처 상태를 push | 녹음 중 polling 0 |
 | **U6 코어 분리** | Flask를 "Local Clova Core" 데몬으로 정리(처음엔 Python 유지, 같은 API를 Unix 소켓으로도 제공). Docker는 ML 워커(ASR/LoRA)만. 이후 필요하면 Rust로 | 브라우저 UI 은퇴 결정 |
+
+#### 진행 상황 (2026-11-03): STT는 보류, UI 트랙 먼저
+
+**환경 확인**
+
+- OS는 Ubuntu **26.04.1 LTS**다(문서의 24.04는 오기). 시스템 Qt는 6.10.2.
+- UI는 프로젝트 venv `.venv-ui/`(git 제외)에 **PySide6 6.12.0 / Qt 6.12.0**으로 고정했다. QtQuick, Multimedia(FFmpeg 9.0.1), Pdf 모듈 모두 확인.
+- 터치스크린 ELAN2513은 멀티터치를 지원한다. 압력을 내는 펜 장치는 없다(ABS_PRESSURE·BTN_TOOL_PEN 없음).
+  - 기존 UI도 한 손가락 필기라서, U0의 핵심 위험이던 펜 압력은 해당 없음.
+  - U0는 별도 스파이크 대신 U1~U3 안에서 터치·PDF를 바로 확인한다.
+
+**U1 읽기 전용 셸(1차)**
+
+- 코드는 `ui_native/`(`__main__.py`, `api.py`, `qml/Main.qml`).
+  - 왼쪽은 과목별 강의 목록과 검색.
+  - 오른쪽은 전사 카드: 시간, SEG 번호, 반복 의심/에러 표시.
+  - 단어를 탭하면 그 위치부터 재생하고, 재생 중인 단어를 강조한다. 이어 재생, 하단 재생 바 포함.
+  - 데이터는 기존 Flask API만 쓴다(`/api/library`, `/api/segments`, `/api/segment/audio`).
+- 개발용 백엔드: `run_clova_v8_2_gamma.py`의 라우트 등록을 `register_routes(app)`로 분리했다. 동작은 그대로다.
+  - `tools/dev-ui-backend.py`가 ASR·캡처·GPU 없이 실제 라우트를 띄운다(컨테이너, 프로젝트 읽기 전용 마운트, 127.0.0.1:8001).
+  - `tools/run-native-ui-dev.sh` 하나로 개발용 백엔드와 UI를 함께 실행한다.
+- 검증(offscreen 렌더 + 음소거 재생 자동 테스트):
+  - 라이브러리와 전사 화면이 렌더링된다.
+  - 단어 탭(1.53초)과 재생 중 다른 세그먼트로의 이동(2.0초)이 정확히 그 위치에서 재생된다.
+  - 세그먼트가 끝나면 다음 세그먼트로 이어진다.
+  - 재생 중인 단어가 강조된다.
+- 알게 된 것:
+  - Qt 6.12 FFmpeg 백엔드는 소스를 바꿀 때 이전 미디어의 LoadedMedia를 먼저 다시 알리고, 새 미디어를 불러오는 동안의 seek는 버린다. → LoadingMedia 다음의 첫 Loaded/Buffered에서 seek하도록 처리.
+  - 영어·한글이 섞인 단어는 폰트가 달라 높이가 어긋났다. → 앱 기본 폰트를 Noto Sans CJK KR로 통일.
+- 아직 안 한 것:
+  - 실제 화면(Wayland)에서의 터치 스크롤 감각과 HiDPI 확인
+  - U2 녹음 제어, U3 PDF·필기, U4 갭리스 재생(지금은 세그먼트 단위 재생 + 이어 재생)
+
+실행:
+
+```bash
+cd ~/clova-note-copy
+tools/run-native-ui-dev.sh                 # 앱이 꺼져 있을 때: 개발용 백엔드(:8001)로
+.venv-ui/bin/python -m ui_native           # ./start-local-clova.sh로 앱이 떠 있을 때(:8000)
+```
 
 원칙:
 
