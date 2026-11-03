@@ -191,6 +191,21 @@ Preview.transcribe_window(pcm, sr) -> text                      # 저장 안 함
 - 알게 된 것:
   - Qt 6.12 FFmpeg 백엔드는 소스를 바꿀 때 이전 미디어의 LoadedMedia를 먼저 다시 알리고, 새 미디어를 불러오는 동안의 seek는 버린다. → LoadingMedia 다음의 첫 Loaded/Buffered에서 seek하도록 처리.
   - 영어·한글이 섞인 단어는 폰트가 달라 높이가 어긋났다. → 앱 기본 폰트를 Noto Sans CJK KR로 통일.
+- 2026-11-03 디자인 재작업: 첫 버전이 보기 좋지 않다는 피드백을 받고 웹 UI(`web/app_v6.css`)의 디자인을 그대로 가져왔다.
+  - 방법: 실제 데이터로 웹 UI를 띄워 계산된 스타일을 뽑았다.
+  - 화면 구성:
+    - 사이드바: 브랜드 마크, 검색, 학기 → 과목(접기, 교수, 개수) → 강의(점, 날짜), 하단 On-device 표시와 다크/라이트 전환
+    - 헤더: 과목 pill, 엔진 배지, 제목, 전체 재생
+    - 전사: 72px 시간 열과 인라인 재생, SEG 번호와 엔진 칩, 14.5px 본문
+    - 재생 중인 문장: accent 테두리, 왼쪽 막대, NOW PLAYING
+    - 재생 중인 단어: 노란 하이라이트
+    - 빈 화면 히어로
+  - 파일: `qml/Theme.qml`(디자인 토큰, singleton), `Sidebar.qml`, `TranscriptRow.qml`, `EmptyState.qml`, `Icon.qml`
+  - 웹과 일부러 다르게 한 점:
+    - 히어로의 무한 회전·파형 애니메이션은 넣지 않았다(GPU를 계속 씀).
+    - 재생 바는 불투명하게 띄우고, 전사 목록 아래쪽을 배경색으로 페이드했다.
+    - QML `font.pixelSize`는 정수만 받아서, 웹의 소수 px(11.5, 8.5 등)는 같은 크기의 pointSize(px × 0.75)로 옮겼다.
+  - 실행 옵션 `--theme dark|light`. 기본은 데스크톱 설정을 따른다(웹과 같음).
 - 아직 안 한 것:
   - 실제 화면(Wayland)에서의 터치 스크롤 감각과 HiDPI 확인
   - U2 녹음 제어, U3 PDF·필기, U4 갭리스 재생(지금은 세그먼트 단위 재생 + 이어 재생)

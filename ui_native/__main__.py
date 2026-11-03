@@ -21,6 +21,7 @@ def main(argv=None) -> int:
     ap.add_argument("--open-session", default="")
     ap.add_argument("--screenshot", type=Path)
     ap.add_argument("--size", default="1280x820", help="window size WxH")
+    ap.add_argument("--theme", choices=["dark", "light"], help="override the desktop light/dark setting")
     args, qt_args = ap.parse_known_args(argv)
 
     if args.screenshot:
@@ -49,6 +50,7 @@ def main(argv=None) -> int:
     engine.setInitialProperties({
         "api": api,
         "initialSessionId": args.open_session,
+        "initialTheme": args.theme or "",
         "width": width,
         "height": height,
     })

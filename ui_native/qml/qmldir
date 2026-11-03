@@ -1,0 +1,5 @@
+singleton Theme 1.0 Theme.qml
+Icon 1.0 Icon.qml
+Sidebar 1.0 Sidebar.qml
+TranscriptRow 1.0 TranscriptRow.qml
+EmptyState 1.0 EmptyState.qml

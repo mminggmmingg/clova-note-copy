@@ -1,59 +1,49 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import QtMultimedia
+import "."
 
-// Local Clova native UI, step U1: read-only browsing over the existing API.
-// Library (subjects -> lectures) on the left, transcript on the right,
-// tap a word to play the lecture from that word.
+// Local Clova native UI, step U1: read-only browsing over the existing API,
+// styled after the web UI (web/app_v6.css). Sidebar (semester -> subject ->
+// lecture) on the left; header, stats and transcript on the right; tap a
+// word to play the lecture from that word.
 ApplicationWindow {
     id: root
 
     required property var api
     property string initialSessionId: ""
+    property string initialTheme: ""
 
     visible: true
     title: session ? session.title + " — Local Clova" : "Local Clova"
+    color: Theme.bg
+    font.family: Theme.family
 
-    // Theme follows the desktop light/dark preference.
-    readonly property bool dark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
-    readonly property color cBg: dark ? "#14171c" : "#f5f6f8"
-    readonly property color cPanel: dark ? "#1b1f26" : "#ffffff"
-    readonly property color cCard: dark ? "#20252d" : "#ffffff"
-    readonly property color cLine: dark ? "#2c333d" : "#e1e5eb"
-    readonly property color cText: dark ? "#e6e9ef" : "#1e2530"
-    readonly property color cMuted: dark ? "#8d97a7" : "#6b7585"
-    readonly property color cAccent: dark ? "#8fa3ff" : "#3d58d6"
-    readonly property color cAccentSoft: dark ? "#262f52" : "#e7ebfd"
-    readonly property color cWarn: dark ? "#f0a46d" : "#b25a1d"
-    readonly property color cWarnSoft: dark ? "#3a2a1f" : "#fbeee4"
-
-    color: cBg
-    font.pixelSize: 14
-
-    property var subjects: ({})
+    property var library: ({ subjects: [], professors: [], sessions: [] })
+    property string search: ""
     property string sessionId: ""
     property var session: null
     property var segments: []
     property string errorText: ""
-    property string search: ""
 
-    // Playback state: which segment is loaded and where to seek once loaded.
-    property int playingSegment: -1
+    // Playback: which segment is loaded and where to seek once it loads.
     property int playingIndex: -1
     property real pendingSeekMs: -1
+    readonly property bool audioRunning: player.playbackState === MediaPlayer.PlayingState
 
-    Component.onCompleted: api.fetchLibrary()
+    Component.onCompleted: {
+        if (initialTheme) Theme.override = initialTheme
+        api.fetchLibrary()
+    }
 
     Connections {
         target: root.api
         function onLibraryLoaded(data) {
             root.errorText = ""
-            const subs = {}
-            for (const s of data.subjects || []) subs[s.id] = s
-            root.subjects = subs
-            root.rebuildLibrary(data.sessions || [])
-            if (root.initialSessionId) root.openSession(root.initialSessionId)
+            root.library = data
+            if (root.initialSessionId && !root.sessionId) root.openSession(root.initialSessionId)
         }
         function onSegmentsLoaded(sid, data) {
             if (sid !== root.sessionId) return
@@ -61,73 +51,78 @@ ApplicationWindow {
             root.segments = (data.segments || []).filter(s => !s.deleted)
         }
         function onRequestFailed(what, message) {
-            root.errorText = (what === "library" ? "백엔드에 연결할 수 없습니다 (" + root.api.baseUrl + "): " : "불러오지 못했습니다: ") + message
+            root.errorText = (what === "library" ? "백엔드에 연결할 수 없습니다 (" + root.api.baseUrl + "). " : "불러오지 못했습니다. ") + message
         }
     }
 
-    property var allSessions: []
-    ListModel { id: libraryModel }
-
-    function subjectLabel(id) {
-        const s = subjects[id]
-        if (!s) return "미분류"
-        return (s.emoji ? s.emoji + " " : "") + s.name
+    // ------------------------------------------------------------ helpers
+    function subjectOf(id) {
+        return (library.subjects || []).find(s => s.id === id) || null
+    }
+    function professorName(id) {
+        const p = (library.professors || []).find(p => p.id === id)
+        return p ? p.name : ""
+    }
+    function shortDate(iso) {
+        if (!iso) return ""
+        const d = new Date(iso)
+        return (d.getMonth() + 1) + "/" + d.getDate()
+    }
+    function clock(sec) {
+        sec = Math.max(0, Math.floor(Number(sec) || 0))
+        const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60
+        return h ? h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0")
+                 : m + ":" + String(s).padStart(2, "0")
     }
 
-    function rebuildLibrary(list) {
-        if (list) allSessions = list
-        libraryModel.clear()
+    // semester -> subject -> lectures, filtered by the search box.
+    readonly property var libraryGroups: {
         const q = search.trim().toLowerCase()
-        const rows = allSessions
-            .filter(s => !q || String(s.title || "").toLowerCase().includes(q))
-            .map(s => ({
+        const bySubject = {}
+        for (const s of library.sessions || []) {
+            const tags = (s.tags || []).map(t => t.name)
+            if (q && !(String(s.title || "") + " " + tags.join(" ")).toLowerCase().includes(q)) continue
+            const key = s.subject_id || "none"
+            ;(bySubject[key] = bySubject[key] || []).push({
                 sessionId: s.session_id,
                 title: s.title || s.session_id,
-                subject: subjectLabel(s.subject_id),
                 created: s.created_at || "",
-                minutes: Math.round(Number(s.recording_time_sec || s.duration_sec || 0) / 60),
-                segmentsCount: Number(s.segment_count || 0),
-                recording: !!s.recording
-            }))
-            .sort((a, b) => a.subject.localeCompare(b.subject, "ko") || b.created.localeCompare(a.created))
-        for (const r of rows) libraryModel.append(r)
+                recording: !!s.recording,
+                meta: [shortDate(s.created_at), tags.slice(0, 2).join(" · ")].filter(x => x).join(" · ")
+            })
+        }
+        const semesters = {}
+        for (const key of Object.keys(bySubject)) {
+            const subj = subjectOf(key)
+            const sessions = bySubject[key].sort((a, b) => b.created.localeCompare(a.created))
+            const semester = subj ? (subj.semester || "학기 미지정") : "미분류"
+            ;(semesters[semester] = semesters[semester] || []).push({
+                key: key,
+                emoji: subj ? (subj.emoji || "📘") : "◌",
+                name: subj ? subj.name : "미분류",
+                professor: subj ? professorName(subj.professor_id) : "",
+                sessions: sessions
+            })
+        }
+        return Object.keys(semesters)
+            .sort((a, b) => (a === "미분류") - (b === "미분류") || b.localeCompare(a))
+            .map(sem => ({ semester: sem, subjects: semesters[sem].sort((a, b) => a.name.localeCompare(b.name, "ko")) }))
     }
 
     function openSession(sid) {
         player.stop()
-        playingSegment = -1
         playingIndex = -1
+        pendingSeekMs = -1
         sessionId = sid
         session = null
         segments = []
         api.fetchSegments(sid)
     }
 
-    function clock(sec) {
-        sec = Math.max(0, Math.floor(Number(sec) || 0))
-        const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60
-        const mm = String(m).padStart(h ? 2 : 1, "0"), ss = String(s).padStart(2, "0")
-        return h ? h + ":" + mm + ":" + ss : mm + ":" + ss
-    }
-
-    function shortDate(iso) {
-        if (!iso) return ""
-        const d = new Date(iso)
-        const days = ["일", "월", "화", "수", "목", "금", "토"]
-        return (d.getMonth() + 1) + "/" + d.getDate() + " (" + days[d.getDay()] + ")"
-    }
-
-    function wordsOf(seg) {
-        if (seg.word_timeline && seg.word_timeline.length) return seg.word_timeline
-        // No word timing (rejected or legacy): whole words, playable from the start.
-        return String(seg.text || "").split(/\s+/).filter(w => w).map(w => ({ text: w, start_sec: 0, end_sec: -1 }))
-    }
-
     function playAt(index, startSec) {
         const seg = segments[index]
         if (!seg || !seg.audio_available) return
         const url = api.url(seg.audio_url)
-        playingSegment = seg.segment
         playingIndex = index
         if (player.source.toString() !== url) {
             pendingSeekMs = Math.max(0, startSec * 1000)
@@ -139,10 +134,16 @@ ApplicationWindow {
         transcript.positionViewAtIndex(index, ListView.Contain)
     }
 
+    function togglePlay(index) {
+        if (playingIndex === index && audioRunning) player.pause()
+        else if (playingIndex === index) player.play()
+        else playAt(index, 0)
+    }
+
     MediaPlayer {
         id: player
         objectName: "player"
-        audioOutput: AudioOutput { id: audioOut; objectName: "audioOut" }
+        audioOutput: AudioOutput { objectName: "audioOut" }
         // Qt 6.12's FFmpeg backend loads a new source asynchronously and, when
         // switching, first re-reports LoadedMedia for the *old* media. A seek
         // before the new media finishes loading is dropped, so the requested
@@ -158,282 +159,331 @@ ApplicationWindow {
                     root.pendingSeekMs = -1
                 }
             }
-            if (mediaStatus === MediaPlayer.EndOfMedia && continueBox.checked && root.playingIndex + 1 < root.segments.length)
+            if (mediaStatus === MediaPlayer.EndOfMedia && continueToggle.checked && root.playingIndex + 1 < root.segments.length)
                 root.playAt(root.playingIndex + 1, 0)
         }
         onErrorOccurred: (error, message) => root.errorText = "재생 오류: " + message
     }
 
+    // Soft accent glow at the top, like the web .app-shell background.
+    Shape {
+        anchors.fill: parent
+        ShapePath {
+            strokeWidth: -1
+            fillGradient: RadialGradient {
+                centerX: root.width * 0.46
+                centerY: -root.height * 0.2
+                centerRadius: Math.hypot(root.width, root.height) * 0.34
+                focalX: centerX
+                focalY: centerY
+                GradientStop { position: 0; color: Theme.glow }
+                GradientStop { position: 1; color: "transparent" }
+            }
+            PathLine { x: root.width; y: 0 }
+            PathLine { x: root.width; y: root.height }
+            PathLine { x: 0; y: root.height }
+            PathLine { x: 0; y: 0 }
+        }
+    }
+
     SplitView {
         anchors.fill: parent
-        orientation: Qt.Horizontal
+        handle: Item {
+            implicitWidth: 5
+            HoverHandler { cursorShape: Qt.SplitHCursor }
+        }
 
-        // ---------------------------------------------------------------- library
-        Rectangle {
-            SplitView.preferredWidth: 310
-            SplitView.minimumWidth: 220
-            color: root.cPanel
+        Sidebar {
+            SplitView.preferredWidth: 292
+            SplitView.minimumWidth: 200
+            SplitView.maximumWidth: 430
+            groups: root.libraryGroups
+            currentSessionId: root.sessionId
+            onSessionClicked: sid => root.openSession(sid)
+            onSearchEdited: text => root.search = text
+        }
+
+        // ------------------------------------------------------------ workspace
+        Item {
+            SplitView.fillWidth: true
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 10
+                spacing: 0
 
-                Label {
-                    text: "Local Clova"
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                    color: root.cText
-                }
-
-                TextField {
+                // Header
+                Rectangle {
                     Layout.fillWidth: true
-                    placeholderText: "강의 검색"
-                    onTextChanged: { root.search = text; root.rebuildLibrary() }
-                }
+                    implicitHeight: 84
+                    color: Theme.header
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
 
-                ListView {
-                    id: libraryList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: libraryModel
-                    spacing: 2
-                    section.property: "subject"
-                    section.delegate: Label {
-                        required property string section
-                        width: ListView.view.width
-                        topPadding: 12
-                        bottomPadding: 4
-                        text: section
-                        color: root.cMuted
-                        font.pixelSize: 12
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                    }
-                    delegate: ItemDelegate {
-                        id: sessionItem
-                        required property string sessionId
-                        required property string title
-                        required property string created
-                        required property int minutes
-                        required property int segmentsCount
-                        required property bool recording
-                        width: ListView.view.width
-                        highlighted: sessionId === root.sessionId
-                        onClicked: root.openSession(sessionId)
-                        background: Rectangle {
-                            radius: 8
-                            color: sessionItem.highlighted ? root.cAccentSoft : (sessionItem.hovered ? root.cBg : "transparent")
-                        }
-                        contentItem: ColumnLayout {
-                            spacing: 1
-                            Label {
-                                Layout.fillWidth: true
-                                text: (sessionItem.recording ? "● " : "") + sessionItem.title
-                                color: sessionItem.highlighted ? root.cAccent : root.cText
-                                elide: Text.ElideRight
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: root.shortDate(sessionItem.created) + " · " + sessionItem.minutes + "분 · " + sessionItem.segmentsCount + "문장"
-                                color: root.cMuted
-                                font.pixelSize: 12
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 30
+                        anchors.rightMargin: 26
+                        spacing: 20
 
-        // ---------------------------------------------------------------- session
-        ColumnLayout {
-            SplitView.fillWidth: true
-            spacing: 0
-
-            Rectangle {
-                Layout.fillWidth: true
-                visible: root.errorText !== ""
-                implicitHeight: errorRow.implicitHeight + 16
-                color: root.cWarnSoft
-                RowLayout {
-                    id: errorRow
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.errorText
-                        color: root.cWarn
-                        wrapMode: Text.Wrap
-                    }
-                    Button {
-                        text: "다시 시도"
-                        onClicked: { root.errorText = ""; root.sessionId ? root.api.fetchSegments(root.sessionId) : root.api.fetchLibrary() }
-                    }
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.margins: 18
-                Layout.bottomMargin: 8
-                spacing: 2
-                visible: root.session !== null
-                Label {
-                    Layout.fillWidth: true
-                    text: root.session ? root.session.title : ""
-                    font.pixelSize: 20
-                    font.weight: Font.DemiBold
-                    color: root.cText
-                    elide: Text.ElideRight
-                }
-                Label {
-                    text: root.session
-                        ? root.subjectLabel(root.session.subject_id) + " · " + root.shortDate(root.session.created_at)
-                          + " · " + root.clock(root.session.recording_time_sec) + " · " + root.segments.length + "문장"
-                        : ""
-                    color: root.cMuted
-                }
-            }
-
-            Label {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: root.session === null
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                text: root.sessionId ? "불러오는 중…" : "왼쪽에서 강의를 고르세요"
-                color: root.cMuted
-                font.pixelSize: 16
-            }
-
-            ListView {
-                id: transcript
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: root.session !== null
-                clip: true
-                spacing: 8
-                leftMargin: 18
-                rightMargin: 18
-                bottomMargin: 18
-                model: root.segments
-                ScrollBar.vertical: ScrollBar {}
-
-                delegate: Rectangle {
-                    id: card
-                    required property var modelData
-                    required property int index
-                    readonly property bool playing: root.playingIndex === index
-                    width: ListView.view.width - ListView.view.leftMargin - ListView.view.rightMargin
-                    implicitHeight: body.implicitHeight + 24
-                    radius: 10
-                    color: root.cCard
-                    border.color: playing ? root.cAccent : root.cLine
-                    border.width: 1
-
-                    ColumnLayout {
-                        id: body
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.margins: 12
-                        spacing: 6
-
-                        RowLayout {
-                            spacing: 8
-                            Label {
-                                text: root.clock(card.modelData.recording_start)
-                                color: root.cMuted
-                                font.pixelSize: 12
-                                font.features: { "tnum": 1 }
-                            }
-                            Label {
-                                text: "SEG " + card.modelData.segment
-                                color: root.cMuted
-                                font.pixelSize: 12
-                            }
-                            Rectangle {
-                                visible: card.modelData.segment_stt_rejected || card.modelData.final_source === "whisper_error"
-                                radius: 5
-                                color: root.cWarnSoft
-                                implicitWidth: chip.implicitWidth + 12
-                                implicitHeight: chip.implicitHeight + 4
-                                Label {
-                                    id: chip
-                                    anchors.centerIn: parent
-                                    text: card.modelData.final_source === "whisper_error" ? "Whisper · error" : "Whisper · 반복 의심"
-                                    color: root.cWarn
-                                    font.pixelSize: 11
-                                }
-                            }
-                            Item { Layout.fillWidth: true }
-                            ToolButton {
-                                text: card.playing && player.playbackState === MediaPlayer.PlayingState ? "❚❚" : "▶"
-                                enabled: !!card.modelData.audio_available
-                                onClicked: card.playing && player.playbackState === MediaPlayer.PlayingState
-                                    ? player.pause() : root.playAt(card.index, 0)
-                            }
-                        }
-
-                        Flow {
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 5
-                            Repeater {
-                                model: root.wordsOf(card.modelData)
-                                delegate: Text {
-                                    required property var modelData
-                                    readonly property real t: player.position / 1000
-                                    readonly property bool active: card.playing && modelData.end_sec > 0
-                                        && t >= modelData.start_sec && t < modelData.end_sec
-                                    text: modelData.text
-                                    color: active ? root.cAccent : root.cText
-                                    font.pixelSize: 16
-                                    font.weight: active ? Font.DemiBold : Font.Normal
-                                    TapHandler {
-                                        onTapped: root.playAt(card.index, Number(parent.modelData.start_sec) || 0)
+                            spacing: 4
+                            RowLayout {
+                                spacing: 7
+                                visible: root.session !== null
+                                Rectangle {
+                                    implicitWidth: pillText.implicitWidth + 14
+                                    implicitHeight: 19
+                                    radius: 9.5
+                                    color: Theme.pillBg
+                                    border.color: Theme.line
+                                    Label {
+                                        id: pillText
+                                        anchors.centerIn: parent
+                                        text: {
+                                            const s = root.session ? root.subjectOf(root.session.subject_id) : null
+                                            return s ? (s.emoji ? s.emoji + " " : "") + s.name : "미분류"
+                                        }
+                                        color: Theme.pillText
+                                        font.pointSize: 6.375
+                                        font.weight: 750
+                                        font.letterSpacing: 0.3
+                                    }
+                                }
+                                Rectangle {
+                                    implicitWidth: badgeText.implicitWidth + 14
+                                    implicitHeight: 19
+                                    radius: 9.5
+                                    color: Theme.greenSoft
+                                    border.color: Theme.greenLine
+                                    Label {
+                                        id: badgeText
+                                        anchors.centerIn: parent
+                                        text: "Whisper Large-v3"
+                                        color: Theme.greenText
+                                        font.pointSize: 6.375
+                                        font.weight: 750
+                                        font.letterSpacing: 0.3
                                     }
                                 }
                             }
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.session ? root.session.title : "오늘의 수업을 기록해보세요"
+                                color: Theme.text
+                                font.pixelSize: 17
+                                font.weight: 690
+                                font.letterSpacing: -0.34
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        // "전체 재생" control button
+                        Rectangle {
+                            visible: root.session !== null && root.segments.length > 0
+                            implicitWidth: playAllRow.implicitWidth + 24
+                            implicitHeight: 36
+                            radius: 9
+                            color: playAllHover.hovered ? Theme.ink(243, 185, 95, Theme.dark ? .16 : .22) : Theme.ink(243, 185, 95, Theme.dark ? .10 : .16)
+                            border.color: Theme.ink(243, 185, 95, Theme.dark ? .24 : .45)
+                            RowLayout {
+                                id: playAllRow
+                                anchors.centerIn: parent
+                                spacing: 7
+                                Icon { name: root.audioRunning ? "pause" : "play-all"; color: Theme.dark ? "#f3c98a" : "#9a5b12"; width: 14; height: 14 }
+                                Label {
+                                    text: root.audioRunning ? "일시정지" : (root.playingIndex >= 0 ? "계속 재생" : "전체 재생")
+                                    color: Theme.dark ? "#f3c98a" : "#9a5b12"
+                                    font.pointSize: 7.875
+                                    font.weight: 650
+                                }
+                            }
+                            HoverHandler { id: playAllHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler {
+                                onTapped: {
+                                    if (root.audioRunning) player.pause()
+                                    else if (root.playingIndex >= 0) player.play()
+                                    else { continueToggle.checked = true; root.playAt(0, 0) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Error banner
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: root.errorText !== ""
+                    implicitHeight: errorRow.implicitHeight + 18
+                    color: Theme.warnSoft
+                    RowLayout {
+                        id: errorRow
+                        anchors.fill: parent
+                        anchors.leftMargin: 30
+                        anchors.rightMargin: 26
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.errorText
+                            color: Theme.warnText
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            text: "다시 시도"
+                            color: Theme.warnText
+                            font.pixelSize: 11
+                            font.weight: 700
+                            TapHandler {
+                                onTapped: {
+                                    root.errorText = ""
+                                    if (root.sessionId) root.api.fetchSegments(root.sessionId)
+                                    else root.api.fetchLibrary()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                EmptyState {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.sessionId === ""
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.sessionId !== "" && root.session === null && root.errorText === ""
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    text: "불러오는 중…"
+                    color: Theme.muted
+                    font.pixelSize: 12
+                }
+
+                // Transcript
+                ListView {
+                    id: transcript
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.session !== null
+                    clip: true
+                    spacing: 0
+                    readonly property real columnWidth: Math.min(900, width - 68)
+                    leftMargin: (width - columnWidth) / 2
+                    rightMargin: leftMargin
+                    topMargin: 22
+                    bottomMargin: 110
+                    model: root.segments
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    header: Item {
+                        width: transcript.columnWidth
+                        height: 52
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.verticalCenterOffset: -9
+                            text: root.session
+                                ? root.segments.length + " sentences · " + root.clock(root.session.recording_time_sec)
+                                  + " audio · " + (root.session.manual_edit_count || 0) + " manual edits"
+                                : ""
+                            color: Theme.stats
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    delegate: TranscriptRow {
+                        required property var modelData
+                        required property int index
+                        width: transcript.columnWidth
+                        seg: modelData
+                        playing: root.playingIndex === index
+                        audioRunning: root.audioRunning
+                        positionSec: playing ? player.position / 1000 : 0
+                        onWordTapped: startSec => root.playAt(index, startSec)
+                        onPlayToggled: root.togglePlay(index)
+                    }
+
+                    ScrollBar.vertical: ScrollBar {
+                        contentItem: Rectangle {
+                            implicitWidth: 6
+                            radius: 3
+                            color: Theme.dark ? "#232a33" : Theme.ink(24, 36, 54, .18)
                         }
                     }
                 }
             }
 
-            // ------------------------------------------------------------ player bar
+            // Fade the transcript out under the floating bar.
             Rectangle {
-                Layout.fillWidth: true
-                implicitHeight: 52
-                color: root.cPanel
-                border.color: root.cLine
                 visible: root.session !== null
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.rightMargin: 10
+                height: 96
+                gradient: Gradient {
+                    GradientStop { position: 0; color: Theme.ink(0, 0, 0, 0) }
+                    GradientStop { position: 0.55; color: Qt.alpha(Theme.bg, 0.85) }
+                    GradientStop { position: 1; color: Theme.bg }
+                }
+            }
+
+            // Floating now-playing bar (opaque, over the fade above).
+            Rectangle {
+                id: playerBar
+                visible: root.playingIndex >= 0
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 22
+                implicitWidth: barRow.implicitWidth + 20
+                implicitHeight: 44
+                radius: 14
+                color: Theme.dark ? "#141920" : "#ffffff"
+                border.color: Theme.lineStrong
 
                 RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
+                    id: barRow
+                    anchors.centerIn: parent
                     spacing: 12
-                    Button {
-                        text: player.playbackState === MediaPlayer.PlayingState ? "일시정지" : "재생"
-                        enabled: root.segments.length > 0
-                        onClicked: {
-                            if (player.playbackState === MediaPlayer.PlayingState) player.pause()
-                            else if (root.playingIndex >= 0) player.play()
-                            else root.playAt(0, 0)
+
+                    Rectangle {
+                        width: 30
+                        height: 30
+                        radius: 9
+                        color: Theme.accentSoft
+                        Icon {
+                            anchors.centerIn: parent
+                            width: 14
+                            height: 14
+                            name: root.audioRunning ? "pause" : "play"
+                            color: Theme.accent
                         }
+                        TapHandler { onTapped: root.audioRunning ? player.pause() : player.play() }
                     }
                     Label {
-                        Layout.fillWidth: true
-                        color: root.cMuted
-                        text: root.playingIndex >= 0
-                            ? "SEG " + root.playingSegment + " · " + root.clock(player.position / 1000) + " / " + root.clock(player.duration / 1000)
-                            : "단어를 누르면 그 위치부터 재생합니다"
-                        elide: Text.ElideRight
+                        text: root.playingIndex >= 0 && root.segments[root.playingIndex]
+                            ? "SEG " + String(root.segments[root.playingIndex].segment).padStart(3, "0")
+                            : ""
+                        color: Theme.segIndex
+                        font.pixelSize: 9
+                        font.weight: 750
+                        font.letterSpacing: 0.6
                     }
-                    CheckBox {
-                        id: continueBox
-                        text: "이어 재생"
-                        checked: true
+                    Label {
+                        text: root.clock(player.position / 1000) + " / " + root.clock(player.duration / 1000)
+                        color: Theme.muted
+                        font.pixelSize: 11
+                        font.features: { "tnum": 1 }
+                    }
+                    Rectangle { width: 1; height: 18; color: Theme.line }
+                    Label {
+                        id: continueToggle
+                        property bool checked: true
+                        text: checked ? "이어 재생 켜짐" : "이어 재생 꺼짐"
+                        color: checked ? Theme.accent : Theme.muted2
+                        font.pointSize: 7.875
+                        font.weight: 650
+                        TapHandler { onTapped: continueToggle.checked = !continueToggle.checked }
                     }
                 }
             }
