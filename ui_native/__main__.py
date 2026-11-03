@@ -13,6 +13,9 @@ import sys
 from pathlib import Path
 
 QML_MAIN = Path(__file__).with_name("qml") / "Main.qml"
+FONT_DIR = Path(__file__).with_name("fonts")
+# Notebook-theme handwriting (the web loads it from Google Fonts).
+HAND_FAMILIES = ("Nanum Pen Script", "나눔손글씨 펜", "NanumPen")
 
 
 def main(argv=None) -> int:
@@ -30,7 +33,7 @@ def main(argv=None) -> int:
 
     # Import after the platform environment is set.
     from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QFont, QGuiApplication
+    from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuickControls2 import QQuickStyle
 
@@ -38,10 +41,15 @@ def main(argv=None) -> int:
 
     app = QGuiApplication([sys.argv[0], *qt_args])
     app.setApplicationName("Local Clova")
+    app.setOrganizationName("LocalClova")  # QtCore Settings: remembers the theme
     app.setDesktopFileName("local-clova")
     # One CJK font for Hangul and Latin alike: mixed-script words in a
     # transcript line then share metrics instead of jumping baselines.
     app.setFont(QFont("Noto Sans CJK KR"))
+    for font_file in sorted(FONT_DIR.glob("*.[ot]tf")):
+        QFontDatabase.addApplicationFont(str(font_file))
+    families = set(QFontDatabase.families())
+    hand_family = next((f for f in HAND_FAMILIES if f in families), "")
     QQuickStyle.setStyle("Basic")
 
     api = ApiClient(args.backend)
@@ -51,6 +59,7 @@ def main(argv=None) -> int:
         "api": api,
         "initialSessionId": args.open_session,
         "initialTheme": args.theme or "",
+        "handFamily": hand_family,
         "width": width,
         "height": height,
     })

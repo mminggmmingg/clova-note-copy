@@ -13,6 +13,7 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 class ApiClient(QObject):
     libraryLoaded = Signal("QVariant")
     segmentsLoaded = Signal(str, "QVariant")
+    pdfsLoaded = Signal(str, "QVariant")
     requestFailed = Signal(str, str)  # what, message
 
     def __init__(self, base_url: str, parent=None):
@@ -39,6 +40,14 @@ class ApiClient(QObject):
             f"/api/segments?session_id={quote(session_id)}",
             "segments",
             lambda data: self.segmentsLoaded.emit(session_id, data),
+        )
+
+    @Slot(str)
+    def fetchPdfs(self, session_id):
+        self._get(
+            f"/api/pdfs?session_id={quote(session_id)}",
+            "pdfs",
+            lambda data: self.pdfsLoaded.emit(session_id, data),
         )
 
     def _get(self, path, what, on_ok):

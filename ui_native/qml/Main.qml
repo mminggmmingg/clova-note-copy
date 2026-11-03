@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -6,15 +7,16 @@ import QtMultimedia
 import "."
 
 // Local Clova native UI, step U1: read-only browsing over the existing API,
-// styled after the web UI (web/app_v6.css). Sidebar (semester -> subject ->
-// lecture) on the left; header, stats and transcript on the right; tap a
-// word to play the lecture from that word.
+// styled after the web UI (web/app_v6.css), notebook theme by default.
+// Sidebar (semester -> subject -> lecture) on the left; header, stats and
+// transcript on the right; tap a word to play the lecture from that word.
 ApplicationWindow {
     id: root
 
     required property var api
     property string initialSessionId: ""
     property string initialTheme: ""
+    property string handFamily: ""      // set by __main__.py; "" if the font is missing
 
     visible: true
     title: session ? session.title + " — Local Clova" : "Local Clova"
@@ -26,15 +28,27 @@ ApplicationWindow {
     property string sessionId: ""
     property var session: null
     property var segments: []
+    property var pdfs: []
     property string errorText: ""
+    property bool sidebarOpen: true
 
     // Playback: which segment is loaded and where to seek once it loads.
     property int playingIndex: -1
     property real pendingSeekMs: -1
     readonly property bool audioRunning: player.playbackState === MediaPlayer.PlayingState
 
+    // Web: clamp(21px, 1.38vw, 25px) for notebook handwriting.
+    readonly property real handSize: Math.max(21, Math.min(25, width * 0.0138))
+
+    Settings {
+        id: prefs
+        category: "ui"
+        property string theme: "notebook"
+    }
+
     Component.onCompleted: {
-        if (initialTheme) Theme.override = initialTheme
+        Theme.mode = initialTheme || prefs.theme || "notebook"
+        Theme.handFamily = handFamily || Theme.family
         api.fetchLibrary()
     }
 
@@ -50,7 +64,11 @@ ApplicationWindow {
             root.session = data
             root.segments = (data.segments || []).filter(s => !s.deleted)
         }
+        function onPdfsLoaded(sid, data) {
+            if (sid === root.sessionId) root.pdfs = data.pdfs || []
+        }
         function onRequestFailed(what, message) {
+            if (what === "pdfs") return
             root.errorText = (what === "library" ? "백엔드에 연결할 수 없습니다 (" + root.api.baseUrl + "). " : "불러오지 못했습니다. ") + message
         }
     }
@@ -74,15 +92,27 @@ ApplicationWindow {
         return h ? h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0")
                  : m + ":" + String(s).padStart(2, "0")
     }
+    function notYet(what) {
+        toast.show(what + "은(는) 다음 단계에서 연결됩니다. 지금은 웹 UI에서 사용하세요.")
+    }
 
-    // semester -> subject -> lectures, filtered by the search box.
+    // Korean collation as in the web (Chrome "ko"): Hangul before Latin.
+    function koCompare(a, b) {
+        const ha = /^[가-힣ㄱ-ㅎ]/.test(a), hb = /^[가-힣ㄱ-ㅎ]/.test(b)
+        if (ha !== hb) return ha ? -1 : 1
+        return String(a).localeCompare(String(b))
+    }
+
+    // semester -> subject -> lectures, same grouping as the web renderSidebar():
+    // semesters newest first, subjects by name (empty ones too unless
+    // searching), unclassified lectures last under "기타".
     readonly property var libraryGroups: {
         const q = search.trim().toLowerCase()
         const bySubject = {}
         for (const s of library.sessions || []) {
             const tags = (s.tags || []).map(t => t.name)
             if (q && !(String(s.title || "") + " " + tags.join(" ")).toLowerCase().includes(q)) continue
-            const key = s.subject_id || "none"
+            const key = subjectOf(s.subject_id) ? s.subject_id : ""
             ;(bySubject[key] = bySubject[key] || []).push({
                 sessionId: s.session_id,
                 title: s.title || s.session_id,
@@ -91,22 +121,30 @@ ApplicationWindow {
                 meta: [shortDate(s.created_at), tags.slice(0, 2).join(" · ")].filter(x => x).join(" · ")
             })
         }
-        const semesters = {}
-        for (const key of Object.keys(bySubject)) {
-            const subj = subjectOf(key)
-            const sessions = bySubject[key].sort((a, b) => b.created.localeCompare(a.created))
-            const semester = subj ? (subj.semester || "학기 미지정") : "미분류"
-            ;(semesters[semester] = semesters[semester] || []).push({
-                key: key,
-                emoji: subj ? (subj.emoji || "📘") : "◌",
-                name: subj ? subj.name : "미분류",
-                professor: subj ? professorName(subj.professor_id) : "",
-                sessions: sessions
-            })
+        for (const key of Object.keys(bySubject))
+            bySubject[key].sort((a, b) => b.created.localeCompare(a.created))
+
+        const subjects = library.subjects || []
+        const semesters = [...new Set(subjects.map(x => x.semester || "기타"))].sort().reverse()
+        const groups = []
+        for (const semester of semesters) {
+            const list = subjects
+                .filter(x => (x.semester || "기타") === semester)
+                .sort((a, b) => koCompare(a.name, b.name))
+                .map(x => ({
+                    key: x.id,
+                    emoji: x.emoji || "📘",
+                    name: x.name,
+                    professor: professorName(x.professor_id),
+                    sessions: bySubject[x.id] || []
+                }))
+                .filter(g => !q || g.sessions.length)
+            if (list.length) groups.push({ semester: semester, subjects: list })
         }
-        return Object.keys(semesters)
-            .sort((a, b) => (a === "미분류") - (b === "미분류") || b.localeCompare(a))
-            .map(sem => ({ semester: sem, subjects: semesters[sem].sort((a, b) => a.name.localeCompare(b.name, "ko")) }))
+        const loose = bySubject[""] || []
+        if (loose.length || !q)
+            groups.push({ semester: "기타", subjects: [{ key: "", emoji: "◌", name: "미분류", professor: "", sessions: loose }] })
+        return groups
     }
 
     function openSession(sid) {
@@ -116,7 +154,9 @@ ApplicationWindow {
         sessionId = sid
         session = null
         segments = []
+        pdfs = []
         api.fetchSegments(sid)
+        api.fetchPdfs(sid)
     }
 
     function playAt(index, startSec) {
@@ -165,9 +205,10 @@ ApplicationWindow {
         onErrorOccurred: (error, message) => root.errorText = "재생 오류: " + message
     }
 
-    // Soft accent glow at the top, like the web .app-shell background.
+    // Soft accent glow at the top (dark/light), like the web .app-shell.
     Shape {
         anchors.fill: parent
+        visible: !Theme.notebook
         ShapePath {
             strokeWidth: -1
             fillGradient: RadialGradient {
@@ -194,13 +235,19 @@ ApplicationWindow {
         }
 
         Sidebar {
+            visible: root.sidebarOpen
             SplitView.preferredWidth: 292
-            SplitView.minimumWidth: 200
+            SplitView.minimumWidth: 220
             SplitView.maximumWidth: 430
             groups: root.libraryGroups
             currentSessionId: root.sessionId
             onSessionClicked: sid => root.openSession(sid)
             onSearchEdited: text => root.search = text
+            onCollapseRequested: root.sidebarOpen = false
+            onNewSessionRequested: root.notYet("새 세션 녹음")
+            onNewSubjectRequested: root.notYet("과목 만들기")
+            onQuitRequested: root.notYet("앱 종료(녹음 스택 정지)")
+            onThemeCycled: { Theme.mode = Theme.next(); prefs.theme = Theme.mode }
         }
 
         // ------------------------------------------------------------ workspace
@@ -216,26 +263,25 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: 84
                     color: Theme.header
-                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.headerLine }
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 30
+                        anchors.leftMargin: root.sidebarOpen ? 30 : 64
                         anchors.rightMargin: 26
-                        spacing: 20
+                        spacing: 16
 
                         ColumnLayout {
-                            Layout.fillWidth: true
                             spacing: 4
+                            Layout.maximumWidth: 460
                             RowLayout {
                                 spacing: 7
-                                visible: root.session !== null
                                 Rectangle {
                                     implicitWidth: pillText.implicitWidth + 14
                                     implicitHeight: 19
                                     radius: 9.5
                                     color: Theme.pillBg
-                                    border.color: Theme.line
+                                    border.color: Theme.notebook ? Theme.ink(124, 96, 63, .13) : Theme.line
                                     Label {
                                         id: pillText
                                         anchors.centerIn: parent
@@ -244,7 +290,7 @@ ApplicationWindow {
                                             return s ? (s.emoji ? s.emoji + " " : "") + s.name : "미분류"
                                         }
                                         color: Theme.pillText
-                                        font.pointSize: 6.375
+                                        font.pointSize: Theme.pt(8.5)
                                         font.weight: 750
                                         font.letterSpacing: 0.3
                                     }
@@ -260,7 +306,7 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         text: "Whisper Large-v3"
                                         color: Theme.greenText
-                                        font.pointSize: 6.375
+                                        font.pointSize: Theme.pt(8.5)
                                         font.weight: 750
                                         font.letterSpacing: 0.3
                                     }
@@ -269,7 +315,7 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: root.session ? root.session.title : "오늘의 수업을 기록해보세요"
-                                color: Theme.text
+                                color: Theme.heading
                                 font.pixelSize: 17
                                 font.weight: 690
                                 font.letterSpacing: -0.34
@@ -277,34 +323,153 @@ ApplicationWindow {
                             }
                         }
 
-                        // "전체 재생" control button
-                        Rectangle {
-                            visible: root.session !== null && root.segments.length > 0
-                            implicitWidth: playAllRow.implicitWidth + 24
-                            implicitHeight: 36
-                            radius: 9
-                            color: playAllHover.hovered ? Theme.ink(243, 185, 95, Theme.dark ? .16 : .22) : Theme.ink(243, 185, 95, Theme.dark ? .10 : .16)
-                            border.color: Theme.ink(243, 185, 95, Theme.dark ? .24 : .45)
-                            RowLayout {
-                                id: playAllRow
-                                anchors.centerIn: parent
-                                spacing: 7
-                                Icon { name: root.audioRunning ? "pause" : "play-all"; color: Theme.dark ? "#f3c98a" : "#9a5b12"; width: 14; height: 14 }
+                        // PDF shelf: the session's PDFs and an "add" tile.
+                        Row {
+                            visible: root.session !== null
+                            spacing: 8
+                            Repeater {
+                                model: root.pdfs
+                                delegate: Item {
+                                    id: tile
+                                    required property var modelData
+                                    width: 54
+                                    height: 62
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        anchors.topMargin: 2
+                                        anchors.bottomMargin: -2
+                                        radius: 10
+                                        color: Theme.ink(151, 116, 66, .12)
+                                        visible: Theme.notebook
+                                    }
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 10
+                                        color: Theme.notebook ? Theme.pdfTile : Theme.accentSoft
+                                        border.color: Theme.notebook ? Theme.pdfTileBorder : Theme.line
+                                    }
+                                    Rectangle {
+                                        id: doc
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        y: 4
+                                        width: 30
+                                        height: 36
+                                        radius: 4
+                                        color: "#ffffff"
+                                        border.color: Theme.pdfRed
+                                        Rectangle {
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.margins: 1
+                                            height: 11
+                                            color: Theme.pdfRed
+                                            Label {
+                                                anchors.centerIn: parent
+                                                text: "PDF"
+                                                color: "white"
+                                                font.pixelSize: 7
+                                                font.weight: 800
+                                            }
+                                        }
+                                    }
+                                    Label {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.bottom: parent.bottom
+                                        anchors.bottomMargin: 4
+                                        width: parent.width - 4
+                                        horizontalAlignment: Text.AlignHCenter
+                                        text: tile.modelData.original_filename || "PDF"
+                                        color: Theme.notebook ? "#5b4e41" : Theme.muted
+                                        font.pointSize: Theme.pt(7.5)
+                                        font.weight: 700
+                                        elide: Text.ElideRight
+                                    }
+                                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                    TapHandler { onTapped: root.notYet("PDF 보기와 필기") }
+                                }
+                            }
+                            Item {
+                                width: 54
+                                height: 62
+                                Shape {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: 4
+                                    width: 36
+                                    height: 36
+                                    ShapePath {
+                                        strokeColor: Theme.notebook ? Theme.ink(110, 130, 230, .6) : Theme.muted2
+                                        strokeWidth: 1
+                                        strokeStyle: ShapePath.DashLine
+                                        dashPattern: [3, 2]
+                                        fillColor: "transparent"
+                                        startX: 4; startY: 0
+                                        PathLine { x: 32; y: 0 }
+                                        PathArc { x: 36; y: 4; radiusX: 4; radiusY: 4 }
+                                        PathLine { x: 36; y: 32 }
+                                        PathArc { x: 32; y: 36; radiusX: 4; radiusY: 4 }
+                                        PathLine { x: 4; y: 36 }
+                                        PathArc { x: 0; y: 32; radiusX: 4; radiusY: 4 }
+                                        PathLine { x: 0; y: 4 }
+                                        PathArc { x: 4; y: 0; radiusX: 4; radiusY: 4 }
+                                    }
+                                    Icon {
+                                        anchors.centerIn: parent
+                                        name: "plus"
+                                        width: 16
+                                        height: 16
+                                        color: Theme.notebook ? "#6e82e6" : Theme.muted
+                                    }
+                                }
                                 Label {
-                                    text: root.audioRunning ? "일시정지" : (root.playingIndex >= 0 ? "계속 재생" : "전체 재생")
-                                    color: Theme.dark ? "#f3c98a" : "#9a5b12"
-                                    font.pointSize: 7.875
-                                    font.weight: 650
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 4
+                                    text: "추가"
+                                    color: Theme.muted2
+                                    font.pointSize: Theme.pt(7.5)
                                 }
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                TapHandler { onTapped: root.notYet("PDF 추가") }
                             }
-                            HoverHandler { id: playAllHover; cursorShape: Qt.PointingHandCursor }
-                            TapHandler {
-                                onTapped: {
-                                    if (root.audioRunning) player.pause()
-                                    else if (root.playingIndex >= 0) player.play()
-                                    else { continueToggle.checked = true; root.playAt(0, 0) }
-                                }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        // Actions
+                        PaperButton {
+                            visible: root.session === null
+                            icon: "stop"
+                            iconSize: 9
+                            text: "정지"
+                            dimmed: true
+                        }
+                        PaperButton {
+                            visible: root.session !== null
+                            icon: "play"
+                            iconSize: 12
+                            text: "재개"
+                            variant: "green"
+                            tilt: 0.12
+                            onClicked: root.notYet("녹음 재개")
+                        }
+                        PaperButton {
+                            visible: root.session !== null && root.segments.length > 0
+                            icon: root.audioRunning ? "pause" : "play-all"
+                            iconSize: 13
+                            text: root.audioRunning ? "일시정지" : (root.playingIndex >= 0 ? "계속 재생" : "전체 재생")
+                            variant: "orange"
+                            tilt: -0.12
+                            onClicked: {
+                                if (root.audioRunning) player.pause()
+                                else if (root.playingIndex >= 0) player.play()
+                                else { continueToggle.checked = true; root.playAt(0, 0) }
                             }
+                        }
+                        PaperButton {
+                            icon: "info"
+                            iconSize: 17
+                            onClicked: root.notYet("세션 정보 패널")
                         }
                     }
                 }
@@ -347,6 +512,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: root.sessionId === ""
+                    onNewSessionRequested: root.notYet("새 세션 녹음")
                 }
 
                 Label {
@@ -368,7 +534,7 @@ ApplicationWindow {
                     visible: root.session !== null
                     clip: true
                     spacing: 0
-                    readonly property real columnWidth: Math.min(900, width - 68)
+                    readonly property real columnWidth: Math.min(Theme.notebook ? 1040 : 900, width - 68)
                     leftMargin: (width - columnWidth) / 2
                     rightMargin: leftMargin
                     topMargin: 22
@@ -399,6 +565,7 @@ ApplicationWindow {
                         playing: root.playingIndex === index
                         audioRunning: root.audioRunning
                         positionSec: playing ? player.position / 1000 : 0
+                        handSize: root.handSize
                         onWordTapped: startSec => root.playAt(index, startSec)
                         onPlayToggled: root.togglePlay(index)
                     }
@@ -407,7 +574,7 @@ ApplicationWindow {
                         contentItem: Rectangle {
                             implicitWidth: 6
                             radius: 3
-                            color: Theme.dark ? "#232a33" : Theme.ink(24, 36, 54, .18)
+                            color: Theme.pick("#232a33", Theme.ink(24, 36, 54, .18), Theme.ink(102, 84, 65, .30))
                         }
                     }
                 }
@@ -422,14 +589,14 @@ ApplicationWindow {
                 anchors.rightMargin: 10
                 height: 96
                 gradient: Gradient {
-                    GradientStop { position: 0; color: Theme.ink(0, 0, 0, 0) }
+                    GradientStop { position: 0; color: Qt.alpha(Theme.bg, 0) }
                     GradientStop { position: 0.55; color: Qt.alpha(Theme.bg, 0.85) }
                     GradientStop { position: 1; color: Theme.bg }
                 }
             }
 
-            // Floating now-playing bar (opaque, over the fade above).
-            Rectangle {
+            // Floating now-playing bar.
+            Item {
                 id: playerBar
                 visible: root.playingIndex >= 0
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -437,9 +604,23 @@ ApplicationWindow {
                 anchors.bottomMargin: 22
                 implicitWidth: barRow.implicitWidth + 20
                 implicitHeight: 44
-                radius: 14
-                color: Theme.dark ? "#141920" : "#ffffff"
-                border.color: Theme.lineStrong
+
+                Rectangle {
+                    visible: Theme.notebook
+                    anchors.fill: parent
+                    anchors.topMargin: 6
+                    anchors.bottomMargin: -8
+                    anchors.leftMargin: 3
+                    anchors.rightMargin: 3
+                    radius: 16
+                    color: Theme.ink(91, 73, 52, .10)
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 14
+                    color: Theme.pick("#141920", "#ffffff", "#fcf8ef")
+                    border.color: Theme.notebook ? Theme.ink(112, 91, 67, .14) : Theme.lineStrong
+                }
 
                 RowLayout {
                     id: barRow
@@ -481,12 +662,66 @@ ApplicationWindow {
                         property bool checked: true
                         text: checked ? "이어 재생 켜짐" : "이어 재생 꺼짐"
                         color: checked ? Theme.accent : Theme.muted2
-                        font.pointSize: 7.875
+                        font.pointSize: Theme.pt(10.5)
                         font.weight: 650
                         TapHandler { onTapped: continueToggle.checked = !continueToggle.checked }
                     }
                 }
             }
+
+            // Fullscreen toggle (bottom-right), like the web's floating paper tab.
+            PaperButton {
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.rightMargin: 22
+                anchors.bottomMargin: 16
+                implicitWidth: 46
+                implicitHeight: 46
+                radius: 13
+                tilt: 0.45
+                icon: "expand"
+                iconSize: 19
+                onClicked: root.visibility === Window.FullScreen ? root.showNormal() : root.showFullScreen()
+            }
         }
+    }
+
+    // Reopen tab when the sidebar is collapsed.
+    PaperButton {
+        visible: !root.sidebarOpen
+        x: 14
+        y: 24
+        icon: "chevron-left"
+        rotation: 180
+        iconSize: 16
+        onClicked: root.sidebarOpen = true
+    }
+
+    // Toast
+    Rectangle {
+        id: toast
+        property string message: ""
+        function show(text) { message = text; opacity = 1; toastTimer.restart() }
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 84
+        width: Math.min(toastLabel.implicitWidth + 32, root.width - 40)
+        height: toastLabel.implicitHeight + 20
+        radius: 12
+        opacity: 0
+        visible: opacity > 0
+        color: Theme.pick("#141920", "#ffffff", "#fcf8ef")
+        border.color: Theme.notebook ? Theme.ink(112, 91, 67, .14) : Theme.lineStrong
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        Label {
+            id: toastLabel
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, root.width - 72)
+            text: toast.message
+            color: Theme.text
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+        }
+        Timer { id: toastTimer; interval: 2600; onTriggered: toast.opacity = 0 }
     }
 }

@@ -3,8 +3,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "."
 
-// Left column: brand, search, semester -> subject -> lecture tree, runtime
-// footer. Mirrors .sidebar in web/app_v6.css.
+// Left column: brand, new session, search, semester -> subject -> lecture tree,
+// runtime footer with theme toggle and app quit. Mirrors .sidebar in
+// web/app_v6.css (all three themes).
 Rectangle {
     id: sidebar
 
@@ -15,6 +16,11 @@ Rectangle {
 
     signal sessionClicked(string sessionId)
     signal searchEdited(string text)
+    signal collapseRequested()
+    signal newSessionRequested()
+    signal newSubjectRequested()
+    signal quitRequested()
+    signal themeCycled()
 
     gradient: Gradient {
         GradientStop { position: 0; color: Theme.sidebarTop }
@@ -25,7 +31,7 @@ Rectangle {
         anchors.right: parent.right
         width: 1
         height: parent.height
-        color: Theme.line
+        color: Theme.headerLine
     }
 
     ColumnLayout {
@@ -40,33 +46,54 @@ Rectangle {
             Layout.rightMargin: 16
             spacing: 11
 
-            Rectangle {
+            Item {
                 width: 32
                 height: 32
-                radius: 10
-                border.color: Theme.ink(143, 155, 255, .23)
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: Theme.ink(124, 140, 255, .22) }
-                    GradientStop { position: 1; color: Theme.ink(169, 121, 255, .10) }
+                rotation: Theme.notebook ? -0.8 : 0
+                Rectangle {
+                    visible: Theme.notebook
+                    anchors.fill: parent
+                    anchors.topMargin: 2
+                    anchors.bottomMargin: -2
+                    radius: 10
+                    color: Theme.ink(180, 150, 112, .14)
                 }
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 2
-                    Repeater {
-                        model: [8, 16, 11]
-                        Rectangle {
-                            required property int modelData
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 3
-                            height: modelData
-                            radius: 1.5
-                            gradient: Gradient {
-                                GradientStop { position: 0; color: Theme.accent }
-                                GradientStop { position: 1; color: "#b8c0ff" }
+                Rectangle {
+                    id: mark
+                    anchors.fill: parent
+                    topLeftRadius: Theme.notebook ? 9 : 10
+                    topRightRadius: Theme.notebook ? 12 : 10
+                    bottomRightRadius: 10
+                    bottomLeftRadius: Theme.notebook ? 8 : 10
+                    border.color: Theme.notebook ? "#ddcfbb" : Theme.ink(143, 155, 255, .23)
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0; color: Theme.notebook ? "#fffdf7" : Theme.ink(124, 140, 255, .22) }
+                        GradientStop { position: 1; color: Theme.notebook ? "#f7eddf" : Theme.ink(169, 121, 255, .10) }
+                    }
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 2
+                        Repeater {
+                            model: [[8, "#d98778"], [16, "#c59a54"], [11, "#7fa18a"]]
+                            Rectangle {
+                                required property var modelData
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 3
+                                height: modelData[0]
+                                radius: 1.5
+                                color: Theme.notebook ? modelData[1] : Theme.accent
                             }
                         }
                     }
+                }
+                Tape {
+                    visible: Theme.notebook
+                    x: 8
+                    y: -4
+                    width: 17
+                    height: 6
+                    rotation: 2
                 }
             }
 
@@ -75,7 +102,7 @@ Rectangle {
                 spacing: 4
                 Label {
                     text: "Local Clova"
-                    color: Theme.text
+                    color: Theme.brandStrong
                     font.pixelSize: 14
                     font.weight: 700
                     font.letterSpacing: -0.14
@@ -86,7 +113,65 @@ Rectangle {
                     color: Theme.brandSub
                     font.pixelSize: 10
                     font.letterSpacing: 0.8
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
                     elide: Text.ElideRight
+                }
+            }
+
+            PaperButton {
+                icon: "chevron-left"
+                iconSize: 16
+                onClicked: sidebar.collapseRequested()
+            }
+        }
+
+        // New session
+        PaperButton {
+            Layout.fillWidth: true
+            Layout.leftMargin: 14
+            Layout.rightMargin: 14
+            Layout.topMargin: 4
+            Layout.bottomMargin: 14
+            implicitHeight: 46
+            fillWidth: true
+            radius: 12
+            tape: true
+            tilt: -0.18
+            onClicked: sidebar.newSessionRequested()
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 10
+                Rectangle {
+                    width: 23
+                    height: 23
+                    radius: 7
+                    color: Theme.notebook ? "#f2e6d4" : Theme.ink(255, 255, 255, .08)
+                    Icon { anchors.centerIn: parent; name: "plus"; width: 14; height: 14; color: Theme.notebook ? "#736557" : Theme.text }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "새 세션"
+                    color: Theme.notebook ? Theme.paperText : Theme.text
+                    font.pixelSize: 16
+                    font.weight: 650
+                }
+                Rectangle {
+                    implicitWidth: kbd.implicitWidth + 12
+                    implicitHeight: 16
+                    radius: 5
+                    color: Theme.notebook ? "#f2e6d4" : Theme.ink(255, 255, 255, .055)
+                    border.color: Theme.notebook ? Theme.ink(124, 96, 63, .12) : Theme.line
+                    Label {
+                        id: kbd
+                        anchors.centerIn: parent
+                        text: "Ctrl N"
+                        color: Theme.notebook ? "#736557" : Theme.muted2
+                        font.pixelSize: 9
+                        font.weight: 650
+                    }
                 }
             }
         }
@@ -96,12 +181,11 @@ Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: 14
             Layout.rightMargin: 14
-            Layout.topMargin: 4
             Layout.bottomMargin: 15
             implicitHeight: 38
             radius: 10
-            color: searchField.activeFocus ? Theme.ink(124, 140, 255, .04) : Theme.searchBg
-            border.color: searchField.activeFocus ? Theme.ink(124, 140, 255, .38) : Theme.line
+            color: searchField.activeFocus && !Theme.notebook ? Theme.ink(124, 140, 255, .04) : Theme.searchBg
+            border.color: searchField.activeFocus ? Theme.ink(185, 138, 73, .38) : Theme.searchBorder
 
             RowLayout {
                 anchors.fill: parent
@@ -112,7 +196,7 @@ Rectangle {
                 TextField {
                     id: searchField
                     Layout.fillWidth: true
-                    placeholderText: "세션 검색"
+                    placeholderText: "세션, 태그 검색"
                     placeholderTextColor: Theme.placeholder
                     color: Theme.text
                     font.pixelSize: 12
@@ -123,17 +207,27 @@ Rectangle {
             }
         }
 
-        // Library label
-        Label {
+        // Library label + new subject
+        RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 17
+            Layout.rightMargin: 17
             Layout.preferredHeight: 28
-            verticalAlignment: Text.AlignVCenter
-            text: "수업 라이브러리"
-            color: Theme.labelRow
-            font.pixelSize: 10
-            font.weight: 700
-            font.letterSpacing: 0.85
+            Label {
+                Layout.fillWidth: true
+                text: "수업 라이브러리"
+                color: Theme.labelRow
+                font.pixelSize: 10
+                font.weight: 700
+                font.letterSpacing: 0.85
+            }
+            PaperButton {
+                icon: "plus"
+                iconSize: 12
+                implicitWidth: 24
+                implicitHeight: 24
+                onClicked: sidebar.newSubjectRequested()
+            }
         }
 
         ScrollView {
@@ -246,6 +340,16 @@ Rectangle {
                                     width: parent.width
                                     leftPadding: 7
 
+                                    Label {
+                                        visible: subjectGroup.modelData.sessions.length === 0
+                                        leftPadding: 31
+                                        topPadding: 6
+                                        bottomPadding: 10
+                                        text: "아직 세션이 없습니다."
+                                        color: Theme.pick("#505865", "#8a94a3", "#a09280")
+                                        font.pixelSize: 10
+                                    }
+
                                     Repeater {
                                         model: subjectGroup.modelData.sessions
                                         delegate: Rectangle {
@@ -257,27 +361,28 @@ Rectangle {
                                             radius: 9
                                             gradient: Gradient {
                                                 orientation: Gradient.Horizontal
-                                                GradientStop { position: 0; color: link.active ? Theme.ink(124, 140, 255, .13) : (linkHover.hovered ? Theme.hover : "transparent") }
-                                                GradientStop { position: 1; color: link.active ? Theme.ink(124, 140, 255, .035) : (linkHover.hovered ? Theme.hover : "transparent") }
+                                                GradientStop { position: 0; color: link.active ? Theme.activeFrom : (linkHover.hovered ? Theme.hover : "transparent") }
+                                                GradientStop { position: 1; color: link.active ? Theme.activeTo : (linkHover.hovered ? Theme.hover : "transparent") }
                                             }
                                             HoverHandler { id: linkHover; cursorShape: Qt.PointingHandCursor }
                                             TapHandler { onTapped: sidebar.sessionClicked(link.modelData.sessionId) }
 
-                                            // Dot (accent with halo when active, red when recording)
+                                            // Dot (with a halo when active or recording)
                                             Rectangle {
-                                                x: 17 - (link.active || link.modelData.recording ? 3 : 0)
-                                                y: 15 - (link.active || link.modelData.recording ? 3 : 0)
-                                                width: link.active || link.modelData.recording ? 11 : 5
+                                                readonly property bool ring: link.active || link.modelData.recording
+                                                x: 17 - (ring ? 3 : 0)
+                                                y: 15 - (ring ? 3 : 0)
+                                                width: ring ? 11 : 5
                                                 height: width
                                                 radius: width / 2
                                                 color: link.modelData.recording ? Theme.ink(255, 109, 117, .12)
-                                                     : link.active ? Theme.ink(124, 140, 255, .11) : "transparent"
+                                                     : link.active ? Qt.alpha(Theme.activeDot, .16) : "transparent"
                                                 Rectangle {
                                                     anchors.centerIn: parent
                                                     width: 5
                                                     height: 5
                                                     radius: 2.5
-                                                    color: link.modelData.recording ? Theme.red : link.active ? Theme.accent : Theme.sessionDot
+                                                    color: link.modelData.recording ? Theme.red : link.active ? Theme.activeDot : Theme.sessionDot
                                                 }
                                             }
 
@@ -293,8 +398,8 @@ Rectangle {
                                                     width: parent.width
                                                     text: link.modelData.title
                                                     color: link.active ? Theme.sessionTitleActive : Theme.sessionTitle
-                                                    font.pointSize: 8.625
-                                                    font.weight: 540
+                                                    font.pointSize: Theme.pt(11.5)
+                                                    font.weight: link.active ? 560 : 400
                                                     elide: Text.ElideRight
                                                 }
                                                 Label {
@@ -319,13 +424,13 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: 1
-            color: Theme.line
+            color: Theme.headerLine
         }
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18
-            Layout.topMargin: 14
-            Layout.bottomMargin: 17
+            Layout.rightMargin: 14
+            Layout.topMargin: 12
             spacing: 7
             Rectangle {
                 width: 6
@@ -337,7 +442,7 @@ Rectangle {
                     width: 14
                     height: 14
                     radius: 7
-                    color: Theme.ink(94, 214, 160, .18)
+                    color: Qt.alpha(Theme.green, .2)
                     z: -1
                 }
             }
@@ -348,22 +453,34 @@ Rectangle {
                 font.pixelSize: 9
                 font.letterSpacing: 0.3
             }
-            // Theme toggle (dark <-> light), like the web footer button.
-            Rectangle {
-                Layout.rightMargin: 14
-                width: 30
-                height: 30
-                radius: 9
-                color: themeHover.hovered ? Theme.hover : "transparent"
-                border.color: Theme.line
+            PaperButton {
+                implicitWidth: 31
+                implicitHeight: 31
+                iconSize: 16
+                icon: Theme.notebook ? "notebook" : (Theme.dark ? "moon" : "sun")
+                onClicked: sidebar.themeCycled()
+            }
+        }
+        PaperButton {
+            Layout.fillWidth: true
+            Layout.leftMargin: 14
+            Layout.rightMargin: 14
+            Layout.topMargin: 9
+            Layout.bottomMargin: 15
+            implicitHeight: 37
+            fillWidth: true
+            onClicked: sidebar.quitRequested()
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                spacing: 9
+                Icon { name: "power"; width: 15; height: 15; color: Theme.notebook ? "#65584b" : Theme.muted }
                 Label {
-                    anchors.centerIn: parent
-                    text: Theme.dark ? "☾" : "☀"
-                    color: Theme.muted
-                    font.pixelSize: 14
+                    Layout.fillWidth: true
+                    text: "앱 종료"
+                    color: Theme.notebook ? "#65584b" : Theme.muted
+                    font.pixelSize: 11
                 }
-                HoverHandler { id: themeHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler { onTapped: Theme.override = Theme.dark ? "light" : "dark" }
             }
         }
     }
