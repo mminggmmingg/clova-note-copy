@@ -41,3 +41,7 @@ tools/run-native-ui-dev.sh              # 앱 없이: ASR/GPU 없는 읽기 전�
 - `tools/deep-filter` (DeepFilterNet 바이너리)
 - 개인 데이터: `data/`, `pdfs/`, `audio/`, `bench_results/`
 - 런타임/로그/백업: `.runtime-*/`, `logs/`, `backups/`
+
+## 라이선스
+
+GPL-3.0 — [LICENSE](LICENSE). Copyright (C) 2026 mminggmmingg. 고쳐서 배포할 때도 같은 GPL-3.0 으로 소스를 공개해야 한다.
